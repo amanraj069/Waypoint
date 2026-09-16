@@ -1,9 +1,8 @@
-from planner import plan
 from verifier import VerificationResult, verify
 
 
-def test_verify_passes_for_the_stub_plan():
-    result = verify(plan("survey the north field"))
+def test_verify_passes_for_a_valid_plan(sample_plan):
+    result = verify(sample_plan)
     assert isinstance(result, VerificationResult)
     assert result.passed is True
     assert result.violations == []

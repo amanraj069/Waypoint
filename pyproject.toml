@@ -5,6 +5,9 @@ description = "Safety-Aware Hierarchical LLM for Autonomous UAV Mission Planning
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.7",
+    "google-genai>=2.23",
+    "python-dotenv>=1.0",
+    "plotly>=6.0",
 ]
 
 [project.optional-dependencies]

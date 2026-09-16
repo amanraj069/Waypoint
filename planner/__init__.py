@@ -1,6 +1,34 @@
-"""LLM hierarchical planner (stubbed)."""
+"""LLM hierarchical planner."""
 
-from planner.models import Action, Plan, SubTask, Waypoint
-from planner.stub_planner import plan
+from planner.errors import (
+    PlannerAPIError,
+    PlannerError,
+    PlannerResponseError,
+    PlanValidationError,
+)
+from planner.llm_planner import plan, replan
+from planner.models import (
+    DEFAULT_CONSTRAINTS,
+    Action,
+    GeoPoint,
+    MissionConstraints,
+    Plan,
+    SubTask,
+    Waypoint,
+)
 
-__all__ = ["Action", "Plan", "SubTask", "Waypoint", "plan"]
+__all__ = [
+    "DEFAULT_CONSTRAINTS",
+    "Action",
+    "GeoPoint",
+    "MissionConstraints",
+    "Plan",
+    "PlanValidationError",
+    "PlannerAPIError",
+    "PlannerError",
+    "PlannerResponseError",
+    "SubTask",
+    "Waypoint",
+    "plan",
+    "replan",
+]

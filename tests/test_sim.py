@@ -1,33 +1,33 @@
 import math
 from collections.abc import Iterator
 
-from planner import Action, Plan, SubTask, Waypoint, plan
+from planner import Action, Plan, SubTask, Waypoint
 from sim import MissionState, execute, initial_state
 
 
-def test_execute_returns_a_generator():
-    assert isinstance(execute(plan("x")), Iterator)
+def test_execute_returns_a_generator(sample_plan):
+    assert isinstance(execute(sample_plan), Iterator)
 
 
-def test_execute_yields_mission_states():
-    states = list(execute(plan("survey the north field")))
+def test_execute_yields_mission_states(sample_plan):
+    states = list(execute(sample_plan))
     assert states
     assert all(isinstance(s, MissionState) for s in states)
 
 
-def test_execution_ends_landed_and_stationary():
-    final = list(execute(plan("survey the north field")))[-1]
+def test_execution_ends_landed_and_stationary(sample_plan):
+    final = list(execute(sample_plan))[-1]
     assert final.z == 0.0
     assert final.velocity == 0.0
 
 
-def test_timestamps_increase_monotonically():
-    states = list(execute(plan("x")))
+def test_timestamps_increase_monotonically(sample_plan):
+    states = list(execute(sample_plan))
     assert all(b.timestamp > a.timestamp for a, b in zip(states, states[1:]))
 
 
-def test_battery_drains_monotonically_and_stays_in_range():
-    states = list(execute(plan("x")))
+def test_battery_drains_monotonically_and_stays_in_range(sample_plan):
+    states = list(execute(sample_plan))
     assert all(b.battery_pct <= a.battery_pct for a, b in zip(states, states[1:]))
     assert all(0.0 <= s.battery_pct <= 100.0 for s in states)
 
