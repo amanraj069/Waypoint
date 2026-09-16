@@ -82,15 +82,18 @@ def run_mission(
             log(f"    -> ({wp.x}, {wp.y}, {wp.z}) @ {wp.speed} m/s  {wp.action.value}")
 
     log("\n[2/4] Verifying...")
-    result = verify(current_plan)
+    result = verify(current_plan, constraints)
+    for warning in result.warnings:
+        log(f"  warning [{warning.type.value}] {warning.description}")
     if not result.passed:
         log("  VERIFICATION FAILED:")
-        for violation in result.violations:
-            log(f"    - {violation}")
+        for violation in result.blocking:
+            log(f"    - [{violation.type.value}] {violation.description}")
         rejected = MissionReport(mission_text, current_plan, result, constraints)
         _save(rejected, runs_dir, log)
         return rejected
-    log("  verification passed")
+    log(f"  verification passed ({len(result.warnings)} warning(s))"
+        if result.warnings else "  verification passed")
 
     report = MissionReport(mission_text, current_plan, result, constraints)
 

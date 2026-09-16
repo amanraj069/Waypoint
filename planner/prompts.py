@@ -113,6 +113,15 @@ negative speed. Use a slower speed while capturing data than while transiting.
 - Keep the whole route short enough to fly within the battery budget, and always \
 leave enough margin to get home and land. Roughly, the aircraft uses about 1% of \
 battery per 40 m flown plus about 1% per 30 s of hovering.
+- Never put a waypoint inside a no-fly zone, and never let the straight line \
+between two consecutive waypoints clip one. Route around a zone with extra \
+waypoints rather than flying through it.
+- Keep the stated separation from every listed obstacle, both at the waypoints \
+and along the legs between them. Standing off sideways or flying over the top \
+both work, as long as the clearance is there.
+- Do not chain waypoints into hairpin turns at transit speed. The faster the \
+aircraft is flying, the wider the turn has to be: slow down through a sharp \
+corner, or insert an intermediate waypoint to open it up.
 
 Rules for the plan itself:
 

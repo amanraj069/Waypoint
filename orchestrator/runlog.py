@@ -44,7 +44,9 @@ def build_run(report: Any, when: datetime | None = None) -> dict:
         "constraints": report.constraints.model_dump() if report.constraints else None,
         "verification": {
             "passed": report.verification.passed,
-            "violations": list(report.verification.violations),
+            "violations": [
+                v.model_dump(mode="json") for v in report.verification.violations
+            ],
         },
         "replans": report.replans,
         "completed": report.completed,

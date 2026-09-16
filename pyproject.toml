@@ -8,6 +8,7 @@ dependencies = [
     "google-genai>=2.23",
     "python-dotenv>=1.0",
     "plotly>=6.0",
+    "shapely>=2.0",
 ]
 
 [project.optional-dependencies]

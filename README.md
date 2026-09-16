@@ -1,12 +1,12 @@
 # waypoint
 
 **Safety-Aware Hierarchical LLM for Autonomous UAV Mission Planning and
-Adaptation**. The planner is real; the rest is still mocked.
+Adaptation**. The planner and the verifier are real; the rest is still mocked.
 
 ```
 natural language mission
         -> planner    (LLM hierarchical planner)   [REAL: Gemini, strict JSON response schema]
-        -> verifier   (deterministic safety check) [stub: always passes]
+        -> verifier   (deterministic safety check) [REAL: shapely geometry, no model in the loop]
         -> sim        (UAV executor)               [stub: linear interpolation generator]
         -> feedback   (telemetry / perception)     [stub: never requests a replan]
         -> replan loop back into planner           [planner.replan() ready, not yet wired]
@@ -17,7 +17,7 @@ natural language mission
 | Path            | Role |
 | --------------- | ---- |
 | `planner/`      | `plan()` / `replan()` against Gemini; `Waypoint`, `SubTask`, `Plan`, `Action`, `MissionConstraints` |
-| `verifier/`     | `verify(plan) -> VerificationResult` (`passed`, `violations`) |
+| `verifier/`     | `verify(plan, constraints) -> VerificationResult` (`passed`, `violations`); the checks live in `verifier/checks.py` |
 | `sim/`          | `MissionState` dataclass, `execute(plan)` generator yielding one state per tick |
 | `feedback/`     | `observe(state) -> Feedback` (`replan_required`, `reasons`) |
 | `orchestrator/` | `run_mission(mission_text)` and the `python -m orchestrator.run` CLI |
@@ -97,6 +97,69 @@ Manual test against the live API (spends tokens):
 python scripts/try_planner.py "survey the north field and return to base"
 ```
 
+## Verifier
+
+`verify(plan, constraints)` is the gate between the planner and the aircraft. It
+is 100% deterministic — plain `shapely` geometry and arithmetic, no model, no
+sampling — so the same plan and constraints always produce the same report. It
+runs every check rather than stopping at the first failure, so one replan can
+fix everything at once.
+
+| Check | What it rejects |
+| --- | --- |
+| `GEOFENCE` | A waypoint outside the fence, or a leg that leaves a concave fence with both ends inside it |
+| `NO_FLY_ZONE` | A waypoint inside a no-fly polygon, or a leg that crosses one |
+| `ALTITUDE` | A waypoint outside `[min_altitude, max_altitude]` (z = 0 is excused for the launch waypoint and for a `LAND`) |
+| `MAX_VELOCITY` | A commanded speed over the limit, or a climb steep enough that the commanded *ground* speed implies an over-limit speed along the path |
+| `TURN_FEASIBILITY` | A corner sharper than the airframe can fly at the speed commanded through it |
+| `BATTERY` | A route whose linear energy estimate exceeds `battery_budget_pct` |
+| `MIN_SEPARATION` | A waypoint or leg inside an obstacle's keep-out radius (`obstacle.radius + min_separation`) |
+
+Each `Violation` carries its `type`, the `waypoint_index` it belongs to (0-based
+into the flattened plan, `None` for whole-plan findings like battery), a
+`severity`, and a `description` written to be handed straight back to the model:
+
+```
+waypoint 3 (subtask "survey_north_field") at (80, 150, 30) is outside the
+geofence, 55.0 m beyond its boundary. Move this waypoint back inside the
+geofence polygon, leaving a few metres of margin.
+```
+
+`result.passed` is False when any **blocking** violation (`ERROR` or `CRITICAL`)
+was found. `WARNING` findings — a marginal turn, a waypoint hugging the fence —
+are reported but do not reject a plan. `result.messages()` hands the
+descriptions to `planner.replan()`.
+
+The mission envelope lives on `MissionConstraints` (geofence, altitude bounds,
+max velocity, battery budget, `no_fly_zones`, `obstacles`, `min_separation`).
+The *aircraft* model lives on `VerifierConfig` and is fully configurable:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `meters_per_battery_pct` | 40 | Metres of flight per 1% of battery |
+| `hover_seconds_per_battery_pct` | 30 | Seconds of hovering per 1% of battery |
+| `hover_seconds_per_waypoint` | 2 | Dwell charged to each `HOVER` waypoint |
+| `reserve_battery_pct` | 0 | Battery that must still be unspent at touchdown |
+| `max_turn_angle_deg` | 150 | Turn the aircraft can make at or below the reference speed |
+| `turn_reference_speed` | 5 | Above this, the allowed turn shrinks in proportion to speed |
+| `geofence_margin` | 0 | Warn when a waypoint is inside the fence but within this margin |
+| `home` | (0, 0, 0) | Start and end point, so the first leg is home → waypoint 0 |
+
+Bad *constraints* (a self-intersecting geofence, a degenerate no-fly polygon)
+raise `ValueError`. A bad *plan* never raises — it comes back as violations.
+
+Manual check against a real plan (the first form spends tokens):
+
+```bash
+python scripts/try_verifier.py "survey the north field and return to base" --save /tmp/plan.json
+python scripts/try_verifier.py --plan /tmp/plan.json --shrink 0.3 --hazards
+```
+
+It verifies the plan against the normal envelope, then against a geofence
+shrunk about its centre (plus, with `--hazards`, a no-fly zone across the route
+and an obstacle on its far end) and prints the full violation report.
+
+
 ## Test
 
 ```bash
@@ -111,9 +174,9 @@ fails rather than dialling out.
 
 - `planner/` — done. Tune `planner/prompts.py` (system prompt + example) rather
   than the call site.
-- `verifier/stub_verifier.py` — geofence, altitude envelope, battery reserve,
-  no-fly zones. Populate `violations` and return `passed=False`; the
-  orchestrator already aborts on a failed verification.
+- `verifier/` — done. Tune the aircraft model in `VerifierConfig` rather than
+  the checks; add a new check as a function in `verifier/checks.py` plus a
+  `ViolationType`.
 - `sim/executor.py` — replace interpolation with real dynamics, or bridge to
   PX4/Gazebo. Keep the generator interface.
 - `feedback/stub_feedback.py` — set `replan_required=True` to trigger the
