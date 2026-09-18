@@ -15,6 +15,8 @@ from google import genai
 from google.genai import errors as genai_errors
 from pydantic import ValidationError
 
+from typing import TYPE_CHECKING
+
 from planner.config import API_KEY_VAR, get_api_key, get_model_ladder
 from planner.errors import PlannerAPIError, PlannerResponseError, PlanValidationError
 from planner.models import MissionConstraints, Plan
@@ -30,6 +32,9 @@ RESPONSE_FORMAT = {
     "mime_type": "application/json",
     "schema": PLAN_SCHEMA,
 }
+
+if TYPE_CHECKING:  # avoids a cycle: world imports planner.models
+    from world.models import World
 
 log = logging.getLogger(__name__)
 
@@ -100,11 +105,20 @@ def plan(
     constraints: MissionConstraints,
     *,
     client: genai.Client | None = None,
+    world: "World | None" = None,
+    home: tuple[float, float, float] | None = None,
+    landing: tuple[float, float, float] | None = None,
 ) -> Plan:
-    """Turn a natural language mission into a validated hierarchical Plan."""
+    """Turn a natural language mission into a validated hierarchical Plan.
+
+    `world` describes the terrain and buildings the mission is flown in, so the
+    model can plan around them rather than being corrected by the verifier.
+    `home` is where the aircraft is standing; the plan has to start and end
+    there, and it is not always the origin.
+    """
     return _request_plan(
         mission_text=mission_text,
-        user_prompt=build_plan_prompt(mission_text, constraints),
+        user_prompt=build_plan_prompt(mission_text, constraints, world, home, landing),
         client=client,
     )
 
@@ -116,12 +130,15 @@ def replan(
     constraints: MissionConstraints,
     *,
     client: genai.Client | None = None,
+    world: "World | None" = None,
+    home: tuple[float, float, float] | None = None,
+    landing: tuple[float, float, float] | None = None,
 ) -> Plan:
     """Ask for a corrected plan, telling the model exactly why the last one failed."""
     return _request_plan(
         mission_text=mission_text,
         user_prompt=build_replan_prompt(
-            mission_text, previous_plan, violation_report, constraints
+            mission_text, previous_plan, violation_report, constraints, world, home, landing
         ),
         client=client,
     )

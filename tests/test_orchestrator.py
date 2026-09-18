@@ -24,11 +24,28 @@ def test_run_mission_completes(capsys, tmp_path):
     assert "landed" in capsys.readouterr().out
 
 
-def test_run_mission_prints_every_tick(capsys, tmp_path):
+def test_run_mission_samples_telemetry_to_the_console(capsys, tmp_path):
+    """At 10 Hz, printing every tick is noise: one line per second of flight."""
     report = run_mission("survey the north field", planner=fake_planner, runs_dir=tmp_path)
     out = capsys.readouterr().out
-    for state in report.states:
-        assert f"t={state.timestamp:6.1f}s" in out
+
+    printed = [line for line in out.splitlines() if "pos=(" in line]
+    assert len(printed) == pytest.approx(report.duration, abs=3)
+    assert len(printed) < len(report.states)
+
+
+def test_a_finer_print_interval_prints_more(capsys, tmp_path):
+    run_mission(
+        "survey the north field", planner=fake_planner, runs_dir=tmp_path, print_every=0.2
+    )
+    fine = len([line for line in capsys.readouterr().out.splitlines() if "pos=(" in line])
+
+    run_mission(
+        "survey the north field", planner=fake_planner, runs_dir=tmp_path, print_every=5.0
+    )
+    coarse = len([line for line in capsys.readouterr().out.splitlines() if "pos=(" in line])
+
+    assert fine > coarse
 
 
 def test_quiet_mode_prints_nothing(capsys, tmp_path):

@@ -7,7 +7,12 @@ everything required), so the decoded body maps onto the `Plan` model.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from planner.models import Action, MissionConstraints, Plan
+
+if TYPE_CHECKING:  # avoids a cycle: world imports planner.models
+    from world.models import World
 
 PLAN_SCHEMA = {
     "type": "object",
@@ -96,7 +101,8 @@ Work in two stages, in this order:
 Stage 1 - decompose. Read the mission and break it into a short ordered list of \
 named subtasks: the phases the aircraft flies through. A typical mission is 3 to \
 6 subtasks. Every plan begins with a takeoff phase and ends with a landing phase, \
-because the aircraft starts and finishes on the ground at the origin (0, 0, 0).
+because the aircraft starts and finishes on the ground at the launch point you \
+are given, which is not always the origin.
 
 Stage 2 - expand. Give each subtask its concrete waypoints: position, speed and \
 action. Waypoints are absolute positions in a local ENU frame in metres, where \
@@ -113,6 +119,19 @@ negative speed. Use a slower speed while capturing data than while transiting.
 - Keep the whole route short enough to fly within the battery budget, and always \
 leave enough margin to get home and land. Roughly, the aircraft uses about 1% of \
 battery per 40 m flown plus about 1% per 30 s of hovering.
+- Never put a waypoint inside a no-fly zone, and never let the straight line \
+between two consecutive waypoints clip one. Route around a zone with extra \
+waypoints rather than flying through it.
+- If an environment is described, fly in it: z is height above the launch pad, \
+not above the ground below, so over rising ground or a building you must raise z \
+to keep clearance. Either climb above every roof before crossing a built-up area, \
+or route between the buildings -- never straight through one.
+- Keep the stated separation from every listed obstacle, both at the waypoints \
+and along the legs between them. Standing off sideways or flying over the top \
+both work, as long as the clearance is there.
+- Do not chain waypoints into hairpin turns at transit speed. The faster the \
+aircraft is flying, the wider the turn has to be: slow down through a sharp \
+corner, or insert an intermediate waypoint to open it up.
 
 Rules for the plan itself:
 
@@ -142,13 +161,48 @@ transiting, and returns to the origin before descending.\
 """
 
 
-def build_plan_prompt(mission_text: str, constraints: MissionConstraints) -> str:
+def describe_home(home: tuple[float, float, float] | None) -> str:
+    """Where the aircraft is standing, in the words the plan has to use."""
+    x, y, z = home or (0.0, 0.0, 0.0)
+    return f"({x:g}, {y:g}, {z:g})"
+
+
+def describe_pads(
+    home: tuple[float, float, float] | None,
+    landing: tuple[float, float, float] | None,
+) -> str:
+    """Where it starts and where it must end, which are not always the same."""
+    pad = describe_home(home)
+    if landing is None or landing == home:
+        return (
+            f"The aircraft starts on the ground at {pad} and must finish landed "
+            f"there -- the first waypoint climbs from {pad} and the last is a LAND "
+            f"back at it."
+        )
+    return (
+        f"The aircraft starts on the ground at {pad} and must finish landed "
+        f"somewhere else: at {describe_home(landing)}. The first waypoint climbs "
+        f"from {pad}, and the last waypoint is a LAND at exactly "
+        f"{describe_home(landing)} -- that spot has been checked and is flat "
+        f"enough to set down on, so land there and nowhere else."
+    )
+
+
+def build_plan_prompt(
+    mission_text: str,
+    constraints: MissionConstraints,
+    world: "World | None" = None,
+    home: tuple[float, float, float] | None = None,
+    landing: tuple[float, float, float] | None = None,
+) -> str:
     """The user turn for a fresh plan."""
+    environment = f"Environment you are flying in:\n{world.describe()}\n\n" if world else ""
     return (
         f"Mission: {mission_text}\n\n"
         f"Operating constraints:\n{constraints.describe()}\n\n"
-        "The aircraft starts on the ground at (0, 0, 0) and must finish landed "
-        "there. Decompose this mission into named subtasks, then give each "
+        f"{environment}"
+        f"{describe_pads(home, landing)} Every coordinate is in the same frame as "
+        "those points. Decompose this mission into named subtasks, then give each "
         "subtask its waypoints, and return the result as JSON."
     )
 
@@ -158,13 +212,19 @@ def build_replan_prompt(
     previous_plan: Plan,
     violation_report: list[str],
     constraints: MissionConstraints,
+    world: "World | None" = None,
+    home: tuple[float, float, float] | None = None,
+    landing: tuple[float, float, float] | None = None,
 ) -> str:
     """The user turn for a corrective replan after the verifier rejected a plan."""
     violations = "\n".join(f"  {i}. {v}" for i, v in enumerate(violation_report, 1))
     rendered = _render_plan(previous_plan)
+    environment = f"Environment you are flying in:\n{world.describe()}\n\n" if world else ""
     return (
         f"Mission: {mission_text}\n\n"
         f"Operating constraints:\n{constraints.describe()}\n\n"
+        f"{environment}"
+        f"{describe_pads(home, landing)}\n\n"
         "You previously submitted this plan:\n\n"
         f"{rendered}\n\n"
         "The safety verifier REJECTED it for these reasons:\n"

@@ -12,9 +12,11 @@ from planner.models import (
     Action,
     GeoPoint,
     MissionConstraints,
+    Obstacle,
     Plan,
     SubTask,
     Waypoint,
+    render_polygon,
 )
 
 __all__ = [
@@ -22,6 +24,7 @@ __all__ = [
     "Action",
     "GeoPoint",
     "MissionConstraints",
+    "Obstacle",
     "Plan",
     "PlanValidationError",
     "PlannerAPIError",
@@ -30,5 +33,6 @@ __all__ = [
     "SubTask",
     "Waypoint",
     "plan",
+    "render_polygon",
     "replan",
 ]

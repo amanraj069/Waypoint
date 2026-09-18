@@ -1,0 +1,119 @@
+{
+  "mission_text": "inspect the three wind turbines along the ridge 120 m north of base, photograph each one from two angles, then come home",
+  "subtasks": [
+    {
+      "name": "takeoff",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 30.0,
+          "speed": 3.0,
+          "action": "MOVE"
+        }
+      ]
+    },
+    {
+      "name": "inspect_turbine_west",
+      "waypoints": [
+        {
+          "x": -40.0,
+          "y": 105.0,
+          "z": 30.0,
+          "speed": 6.0,
+          "action": "MOVE"
+        },
+        {
+          "x": -40.0,
+          "y": 105.0,
+          "z": 30.0,
+          "speed": 2.0,
+          "action": "CAPTURE"
+        },
+        {
+          "x": -55.0,
+          "y": 120.0,
+          "z": 30.0,
+          "speed": 2.0,
+          "action": "CAPTURE"
+        }
+      ]
+    },
+    {
+      "name": "inspect_turbine_center",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 105.0,
+          "z": 30.0,
+          "speed": 5.0,
+          "action": "MOVE"
+        },
+        {
+          "x": 0.0,
+          "y": 105.0,
+          "z": 30.0,
+          "speed": 2.0,
+          "action": "CAPTURE"
+        },
+        {
+          "x": -15.0,
+          "y": 120.0,
+          "z": 30.0,
+          "speed": 2.0,
+          "action": "CAPTURE"
+        }
+      ]
+    },
+    {
+      "name": "inspect_turbine_east",
+      "waypoints": [
+        {
+          "x": 40.0,
+          "y": 105.0,
+          "z": 30.0,
+          "speed": 5.0,
+          "action": "MOVE"
+        },
+        {
+          "x": 40.0,
+          "y": 105.0,
+          "z": 30.0,
+          "speed": 2.0,
+          "action": "CAPTURE"
+        },
+        {
+          "x": 55.0,
+          "y": 120.0,
+          "z": 30.0,
+          "speed": 2.0,
+          "action": "CAPTURE"
+        }
+      ]
+    },
+    {
+      "name": "return_to_base",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 30.0,
+          "speed": 8.0,
+          "action": "MOVE"
+        }
+      ]
+    },
+    {
+      "name": "land",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "speed": 1.5,
+          "action": "LAND"
+        }
+      ]
+    }
+  ]
+}

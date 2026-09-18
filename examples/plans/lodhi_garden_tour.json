@@ -1,0 +1,110 @@
+{
+  "mission_text": "photograph Bara Gumbad from two sides, fly north up the ashoka avenue, make a low pass over the lake, look at Safdarjung's Tomb, then come home",
+  "subtasks": [
+    {
+      "name": "takeoff",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 24.0,
+          "speed": 3.0,
+          "action": "MOVE"
+        }
+      ]
+    },
+    {
+      "name": "up_the_ashoka_avenue",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 30.0,
+          "z": 24.0,
+          "speed": 5.0,
+          "action": "MOVE"
+        },
+        {
+          "x": 0.0,
+          "y": 170.0,
+          "z": 24.0,
+          "speed": 5.0,
+          "action": "MOVE"
+        }
+      ]
+    },
+    {
+      "name": "photograph_bara_gumbad",
+      "waypoints": [
+        {
+          "x": -30.0,
+          "y": 205.0,
+          "z": 30.0,
+          "speed": 3.0,
+          "action": "CAPTURE"
+        },
+        {
+          "x": 40.0,
+          "y": 226.0,
+          "z": 30.0,
+          "speed": 3.0,
+          "action": "CAPTURE"
+        }
+      ]
+    },
+    {
+      "name": "low_pass_over_the_lake",
+      "waypoints": [
+        {
+          "x": 70.0,
+          "y": 348.0,
+          "z": 10.0,
+          "speed": 4.0,
+          "action": "CAPTURE"
+        },
+        {
+          "x": 158.0,
+          "y": 366.0,
+          "z": 10.0,
+          "speed": 4.0,
+          "action": "CAPTURE"
+        }
+      ]
+    },
+    {
+      "name": "stand_off_safdarjung",
+      "waypoints": [
+        {
+          "x": -296.0,
+          "y": 216.0,
+          "z": 62.0,
+          "speed": 5.0,
+          "action": "CAPTURE"
+        }
+      ]
+    },
+    {
+      "name": "return_to_the_gate",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 45.0,
+          "speed": 7.0,
+          "action": "MOVE"
+        }
+      ]
+    },
+    {
+      "name": "land",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "speed": 1.5,
+          "action": "LAND"
+        }
+      ]
+    }
+  ]
+}

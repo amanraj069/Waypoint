@@ -1,0 +1,65 @@
+{
+  "mission_text": "fly the length of Chandni Chowk below the rooftops, from Fatehpuri Masjid to the Lahori Gate of the Red Fort, then come home",
+  "subtasks": [
+    {
+      "name": "takeoff",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 14.0,
+          "speed": 3.0,
+          "action": "MOVE"
+        }
+      ]
+    },
+    {
+      "name": "run_west_to_fatehpuri",
+      "waypoints": [
+        {
+          "x": -235.0,
+          "y": 0.0,
+          "z": 14.0,
+          "speed": 6.0,
+          "action": "CAPTURE"
+        }
+      ]
+    },
+    {
+      "name": "run_east_to_the_red_fort",
+      "waypoints": [
+        {
+          "x": 240.0,
+          "y": 0.0,
+          "z": 14.0,
+          "speed": 6.0,
+          "action": "CAPTURE"
+        }
+      ]
+    },
+    {
+      "name": "return_to_the_town_hall",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 14.0,
+          "speed": 6.0,
+          "action": "MOVE"
+        }
+      ]
+    },
+    {
+      "name": "land",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "speed": 1.5,
+          "action": "LAND"
+        }
+      ]
+    }
+  ]
+}

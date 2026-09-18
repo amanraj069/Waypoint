@@ -1,0 +1,12 @@
+{
+  "events": [
+    {
+      "type": "GPS_DRIFT",
+      "name": "gps slip",
+      "trigger": { "time": 3.0 },
+      "magnitude": 1.2,
+      "direction": 0.0,
+      "duration": 30.0
+    }
+  ]
+}
