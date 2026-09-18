@@ -1,0 +1,103 @@
+{
+  "mission_text": "climb the Pothamedu ridge, photograph the Mattupetty dam and the lake, then come back over the tea estate",
+  "subtasks": [
+    {
+      "name": "takeoff",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 40.0,
+          "speed": 3.0,
+          "action": "MOVE"
+        }
+      ]
+    },
+    {
+      "name": "climb_towards_the_dam",
+      "waypoints": [
+        {
+          "x": 120.0,
+          "y": 0.0,
+          "z": 60.0,
+          "speed": 7.0,
+          "action": "MOVE"
+        }
+      ]
+    },
+    {
+      "name": "photograph_the_dam_wall",
+      "waypoints": [
+        {
+          "x": 168.0,
+          "y": 10.0,
+          "z": 85.0,
+          "speed": 4.0,
+          "action": "CAPTURE"
+        }
+      ]
+    },
+    {
+      "name": "low_pass_over_mattupetty_lake",
+      "waypoints": [
+        {
+          "x": 210.0,
+          "y": 95.0,
+          "z": 80.0,
+          "speed": 5.0,
+          "action": "MOVE"
+        },
+        {
+          "x": 170.0,
+          "y": 130.0,
+          "z": 80.0,
+          "speed": 4.0,
+          "action": "CAPTURE"
+        }
+      ]
+    },
+    {
+      "name": "over_the_tea_estate",
+      "waypoints": [
+        {
+          "x": -120.0,
+          "y": 60.0,
+          "z": 80.0,
+          "speed": 8.0,
+          "action": "MOVE"
+        },
+        {
+          "x": -180.0,
+          "y": -110.0,
+          "z": 70.0,
+          "speed": 5.0,
+          "action": "CAPTURE"
+        }
+      ]
+    },
+    {
+      "name": "return_to_town",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 45.0,
+          "speed": 8.0,
+          "action": "MOVE"
+        }
+      ]
+    },
+    {
+      "name": "land",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "speed": 1.5,
+          "action": "LAND"
+        }
+      ]
+    }
+  ]
+}

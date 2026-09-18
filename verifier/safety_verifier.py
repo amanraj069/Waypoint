@@ -18,21 +18,26 @@ from planner.models import MissionConstraints, Plan
 from verifier.checks import (
     check_altitude,
     check_battery,
+    check_buildings,
     check_geofence,
+    check_landing,
     check_no_fly_zones,
     check_separation,
+    check_terrain,
     check_turns,
     check_velocity,
     flatten,
     legs_of,
 )
 from verifier.models import DEFAULT_CONFIG, VerificationResult, VerifierConfig, Violation
+from world.models import World
 
 
 def verify(
     plan: Plan,
     constraints: MissionConstraints,
     config: VerifierConfig | None = None,
+    world: World | None = None,
 ) -> VerificationResult:
     """Check a plan against the safety envelope.
 
@@ -40,6 +45,9 @@ def verify(
     first one, so one replan can fix them together. Raises ValueError only if
     the *constraints* are unusable (e.g. a self-intersecting geofence); a bad
     plan produces violations, never an exception.
+
+    Pass a `world` to also check the route against the ground and the buildings
+    standing on it; with none, the checks that need an environment are skipped.
     """
     config = config or DEFAULT_CONFIG
     flat = flatten(plan)
@@ -53,6 +61,9 @@ def verify(
         *check_turns(flat, config),
         *check_battery(legs, flat, constraints, config),
         *check_separation(flat, legs, constraints),
+        *check_buildings(flat, legs, world),
+        *check_terrain(flat, legs, world, config),
+        *check_landing(flat, world, config),
     ]
 
     return VerificationResult(

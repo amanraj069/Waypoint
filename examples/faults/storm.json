@@ -1,0 +1,33 @@
+{
+  "events": [
+    {
+      "type": "WIND_GUST",
+      "name": "squall",
+      "trigger": { "time": 12.0 },
+      "magnitude": 9.0,
+      "direction": 90.0,
+      "duration": 6.0
+    },
+    {
+      "type": "BATTERY_DRAIN_SPIKE",
+      "name": "cell fault",
+      "trigger": { "battery_below": 97.0 },
+      "magnitude": 0.8,
+      "duration": 15.0
+    },
+    {
+      "type": "OBSTACLE_APPEARS",
+      "name": "crane spotted",
+      "trigger": { "at_waypoint": 3 },
+      "obstacle": { "x": 48.0, "y": 60.0, "radius": 12.0, "height": 40.0, "name": "mobile crane" }
+    },
+    {
+      "type": "GPS_DRIFT",
+      "name": "gps slip",
+      "trigger": { "at_waypoint": 5 },
+      "magnitude": 0.6,
+      "direction": 200.0,
+      "duration": 18.0
+    }
+  ]
+}

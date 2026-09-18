@@ -18,6 +18,8 @@ from shapely.geometry import LineString, Point, Polygon
 
 from planner.models import Action, GeoPoint, MissionConstraints, Obstacle, Plan, Waypoint
 from verifier.models import Severity, Violation, ViolationType, VerifierConfig
+from world.landing import find as find_site, survey as survey_site
+from world.models import Building, World
 
 # Slack for floating point comparisons only -- not a safety margin.
 EPS = 1e-9
@@ -508,3 +510,237 @@ def _angle_between(a: tuple[float, float], b: tuple[float, float]) -> float:
     dot = a[0] * b[0] + a[1] * b[1]
     cross = a[0] * b[1] - a[1] * b[0]
     return abs(math.degrees(math.atan2(cross, dot)))
+
+
+# --------------------------------------------------------------------------
+# The world: buildings standing in the way, and ground that is not flat.
+# These only run when a World is supplied; with none, the sky is empty.
+# --------------------------------------------------------------------------
+
+
+def check_buildings(
+    flat: list[FlatWaypoint], legs: list[Leg], world: World | None
+) -> list[Violation]:
+    """No waypoint may sit inside a building, and no leg may fly through one."""
+    if not world or not world.buildings:
+        return []
+
+    violations: list[Violation] = []
+    occupied: set[int] = set()
+
+    for fw in flat:
+        building = world.collides(*fw.xyz)
+        if building is None:
+            continue
+        occupied.add(fw.index)
+        violations.append(
+            Violation(
+                type=ViolationType.BUILDING,
+                waypoint_index=fw.index,
+                description=(
+                    f"{fw.label} is inside {building.label()}, whose roof is at "
+                    f"{building.roof:.0f} m. Move the waypoint off the footprint, or raise it "
+                    f"above {building.roof:.0f} m to cross over the top."
+                ),
+                severity=Severity.CRITICAL,
+            )
+        )
+
+    for leg in legs:
+        if leg.index in occupied or leg.index - 1 in occupied:
+            continue  # already reported at the waypoint
+        for building, lowest in _legs_through(leg, world):
+            violations.append(
+                Violation(
+                    type=ViolationType.BUILDING,
+                    waypoint_index=leg.index,
+                    description=(
+                        f"{leg.label} passes through {building.label()}: over the footprint the "
+                        f"route is as low as {lowest:.0f} m, below the {building.roof:.0f} m roof. "
+                        "Route around the building, or climb above its roof before crossing it."
+                    ),
+                    severity=Severity.CRITICAL,
+                )
+            )
+    return violations
+
+
+def _legs_through(leg: Leg, world: World) -> list[tuple[Building, float]]:
+    """Buildings this leg flies into, with the route's lowest altitude over each.
+
+    The leg climbs or descends linearly, so its lowest point over a footprint is
+    at one end of the crossing -- no sampling needed to be exact.
+    """
+    line = leg.line_xy
+    if line.geom_type != "LineString":
+        return []
+
+    hits = []
+    for building in world.obstructions(line):
+        crossing = line.intersection(building.polygon)
+        if crossing.is_empty:
+            continue
+        fractions = [
+            line.project(Point(coord)) / line.length
+            for geom in getattr(crossing, "geoms", [crossing])
+            for coord in getattr(geom, "coords", [])
+        ]
+        if not fractions:
+            continue
+        start_z, end_z = leg.start[2], leg.end.wp.z
+        altitudes = [start_z + (end_z - start_z) * f for f in (min(fractions), max(fractions))]
+        lowest = min(altitudes)
+        if lowest <= building.roof:
+            hits.append((building, lowest))
+    return hits
+
+
+def check_terrain(
+    flat: list[FlatWaypoint],
+    legs: list[Leg],
+    world: World | None,
+    config: VerifierConfig,
+) -> list[Violation]:
+    """Stay above the ground, by a margin, all the way along the route."""
+    if not world or not world.terrain:
+        return []
+
+    violations: list[Violation] = []
+    grounded: set[int] = set()
+
+    for fw in flat:
+        ground = world.elevation_at(fw.wp.x, fw.wp.y)
+        clearance = fw.wp.z - ground
+        if _on_the_ground(fw) or abs(clearance) <= 0.5 and (fw.index == 0 or fw.wp.action is Action.LAND):
+            continue
+        if clearance < 0:
+            grounded.add(fw.index)
+            violations.append(
+                Violation(
+                    type=ViolationType.TERRAIN,
+                    waypoint_index=fw.index,
+                    description=(
+                        f"{fw.label} is {abs(clearance):.1f} m underground -- the ground there is "
+                        f"at {ground:.1f} m. Remember z is height above the launch pad, not above "
+                        f"the ground below, so raise it to at least "
+                        f"{ground + config.min_ground_clearance:.1f} m."
+                    ),
+                    severity=Severity.CRITICAL,
+                )
+            )
+        elif clearance < config.min_ground_clearance:
+            grounded.add(fw.index)
+            violations.append(
+                Violation(
+                    type=ViolationType.TERRAIN,
+                    waypoint_index=fw.index,
+                    description=(
+                        f"{fw.label} clears the ground by only {clearance:.1f} m (the ground "
+                        f"there is at {ground:.1f} m), under the "
+                        f"{config.min_ground_clearance:g} m minimum. Raise it to at least "
+                        f"{ground + config.min_ground_clearance:.1f} m."
+                    ),
+                    severity=Severity.ERROR,
+                )
+            )
+
+    for leg in legs:
+        if leg.index in grounded or leg.index - 1 in grounded:
+            continue
+        worst = _lowest_clearance(leg, world, config.terrain_sample_step)
+        if worst is None or worst[0] >= config.min_ground_clearance:
+            continue
+        clearance, x, y = worst
+        problem = "flies into the hillside" if clearance < 0 else "skims the ground"
+        violations.append(
+            Violation(
+                type=ViolationType.TERRAIN,
+                waypoint_index=leg.index,
+                description=(
+                    f"{leg.label} {problem}: at ({x:.0f}, {y:.0f}) the ground rises to "
+                    f"{world.elevation_at(x, y):.1f} m and the route clears it by only "
+                    f"{clearance:.1f} m. Raise the leg, or route around the high ground."
+                ),
+                severity=Severity.CRITICAL if clearance < 0 else Severity.ERROR,
+            )
+        )
+    return violations
+
+
+def _lowest_clearance(
+    leg: Leg, world: World, step: float
+) -> tuple[float, float, float] | None:
+    """Walk the leg and return the worst (clearance, x, y) over the ground."""
+    length = leg.length_3d
+    if length <= EPS:
+        return None
+    # Ignore the very ends: a landing leg is meant to touch the ground.
+    steps = max(2, int(length / step))
+    worst: tuple[float, float, float] | None = None
+    start, end = leg.start, leg.end.xyz
+    for i in range(1, steps):
+        f = i / steps
+        x = start[0] + (end[0] - start[0]) * f
+        y = start[1] + (end[1] - start[1]) * f
+        z = start[2] + (end[2] - start[2]) * f
+        clearance = z - world.elevation_at(x, y)
+        if worst is None or clearance < worst[0]:
+            worst = (clearance, x, y)
+    return worst
+
+
+def check_landing(
+    flat: list[FlatWaypoint], world: World | None, config: VerifierConfig
+) -> list[Violation]:
+    """A LAND waypoint has to be somewhere you could actually put it down.
+
+    Two separate things go wrong here. The waypoint can be at the wrong height
+    -- hovering above the ground or buried under it, because z is measured from
+    the datum and not from the ground below. And the ground itself can be
+    unusable: a patch that slopes away under the skids tips a multirotor over,
+    however accurately it was flown.
+    """
+    if not world:
+        return []
+
+    violations: list[Violation] = []
+    for fw in flat:
+        if fw.wp.action is not Action.LAND:
+            continue
+
+        site = survey_site(world, fw.wp.x, fw.wp.y)
+        above = fw.wp.z - site.elevation
+        if abs(above) > config.landing_tolerance:
+            where = "above" if above > 0 else "below"
+            violations.append(
+                Violation(
+                    type=ViolationType.LANDING,
+                    waypoint_index=fw.index,
+                    description=(
+                        f"{fw.label} is a LAND waypoint {abs(above):.1f} m {where} the ground, "
+                        f"which is at {site.elevation:.1f} m there. Put it at "
+                        f"z = {site.elevation:.1f} so it touches down."
+                    ),
+                    severity=Severity.ERROR,
+                )
+            )
+
+        if not site.usable:
+            nearby = find_site(world, fw.wp.x, fw.wp.y)
+            remedy = (
+                f"The nearest ground that would do is ({nearby.x:.0f}, {nearby.y:.0f}), "
+                f"{nearby.moved:.0f} m away."
+                if nearby.usable
+                else "There is nowhere within 120 m that would do; land somewhere else entirely."
+            )
+            violations.append(
+                Violation(
+                    type=ViolationType.LANDING,
+                    waypoint_index=fw.index,
+                    description=(
+                        f"{fw.label} cannot be landed on: {site.why_not()}. {remedy}"
+                    ),
+                    severity=Severity.CRITICAL,
+                )
+            )
+    return violations

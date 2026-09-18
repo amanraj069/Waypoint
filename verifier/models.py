@@ -22,6 +22,9 @@ class ViolationType(str, Enum):
     TURN_FEASIBILITY = "TURN_FEASIBILITY"
     BATTERY = "BATTERY"
     MIN_SEPARATION = "MIN_SEPARATION"
+    BUILDING = "BUILDING"
+    TERRAIN = "TERRAIN"
+    LANDING = "LANDING"
 
 
 class Severity(str, Enum):
@@ -120,6 +123,22 @@ class VerifierConfig(BaseModel):
 
     # Optional soft margin inside the geofence; 0 disables the warning.
     geofence_margin: float = Field(default=0.0, ge=0)
+
+    # Flying over a world with relief and buildings in it.
+    min_ground_clearance: float = Field(
+        default=5.0, ge=0, description="Metres the route must stay above the ground."
+    )
+    roof_clearance: float = Field(
+        default=3.0, ge=0, description="Metres to clear a roof by when crossing above one."
+    )
+    terrain_sample_step: float = Field(
+        default=5.0, gt=0, description="Spacing when walking a leg to check ground clearance."
+    )
+    landing_tolerance: float = Field(
+        default=1.5,
+        gt=0,
+        description="How far above the ground a LAND waypoint may sit before it is wrong.",
+    )
 
     # Where the aircraft starts and ends, used for the first and last legs.
     home: tuple[float, float, float] = (0.0, 0.0, 0.0)

@@ -1,0 +1,112 @@
+{
+  "mission_text": "survey the north field, inspect the comms tower 80 m east of base, then return to base",
+  "subtasks": [
+    {
+      "name": "takeoff",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 30.0,
+          "speed": 3.0,
+          "action": "MOVE"
+        }
+      ]
+    },
+    {
+      "name": "survey_north_field",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 100.0,
+          "z": 30.0,
+          "speed": 5.0,
+          "action": "CAPTURE"
+        },
+        {
+          "x": 80.0,
+          "y": 100.0,
+          "z": 30.0,
+          "speed": 5.0,
+          "action": "CAPTURE"
+        },
+        {
+          "x": 80.0,
+          "y": 150.0,
+          "z": 30.0,
+          "speed": 5.0,
+          "action": "CAPTURE"
+        },
+        {
+          "x": 0.0,
+          "y": 150.0,
+          "z": 30.0,
+          "speed": 5.0,
+          "action": "CAPTURE"
+        }
+      ]
+    },
+    {
+      "name": "transit_to_tower",
+      "waypoints": [
+        {
+          "x": 80.0,
+          "y": 20.0,
+          "z": 30.0,
+          "speed": 8.0,
+          "action": "MOVE"
+        }
+      ]
+    },
+    {
+      "name": "inspect_tower",
+      "waypoints": [
+        {
+          "x": 80.0,
+          "y": 10.0,
+          "z": 25.0,
+          "speed": 3.0,
+          "action": "CAPTURE"
+        },
+        {
+          "x": 90.0,
+          "y": 0.0,
+          "z": 25.0,
+          "speed": 3.0,
+          "action": "CAPTURE"
+        },
+        {
+          "x": 80.0,
+          "y": -10.0,
+          "z": 25.0,
+          "speed": 3.0,
+          "action": "CAPTURE"
+        }
+      ]
+    },
+    {
+      "name": "return_to_base",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 30.0,
+          "speed": 8.0,
+          "action": "MOVE"
+        }
+      ]
+    },
+    {
+      "name": "land",
+      "waypoints": [
+        {
+          "x": 0.0,
+          "y": 0.0,
+          "z": 0.0,
+          "speed": 1.5,
+          "action": "LAND"
+        }
+      ]
+    }
+  ]
+}

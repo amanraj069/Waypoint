@@ -1,22 +1,25 @@
 """Persist a finished mission to a self-contained JSON run file.
 
-A run file carries everything needed to replay or plot the mission without the
-code that produced it: the mission text, the constraints, the verification
-result, the planned waypoints (each tagged with its subtask) and every
-telemetry tick.
+A run file carries everything needed to replay, plot or animate the mission
+without the code that produced it: the mission text, the constraints, the
+verification result, the planned waypoints (each tagged with its subtask), the
+simulator settings, the fault schedule, the obstacles that existed or appeared,
+the flight event timeline and every telemetry tick.
+
+Schema 2 added the simulator sections; `viewer/index.html` reads this file
+directly.
 """
 
 from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 RUNS_DIR = Path("runs")
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 _SLUG_MAX = 48
 
 
@@ -50,6 +53,11 @@ def build_run(report: Any, when: datetime | None = None) -> dict:
         },
         "replans": report.replans,
         "completed": report.completed,
+        "sim": _sim_section(report),
+        "world": report.world.model_dump(mode="json") if report.world else None,
+        "faults": [event.model_dump(mode="json") for event in (report.faults.events if report.faults else [])],
+        "events": list(report.events),
+        "obstacles": list(report.obstacles),
         # Flattened, but each waypoint keeps its subtask so the hierarchy is
         # recoverable by grouping on it.
         "waypoints": [
@@ -66,7 +74,23 @@ def build_run(report: Any, when: datetime | None = None) -> dict:
                 (s, w) for s in report.plan.subtasks for w in s.waypoints
             )
         ],
-        "ticks": [asdict(state) for state in report.states],
+        "ticks": [state.as_record() for state in report.states],
+    }
+
+
+def _sim_section(report: Any) -> dict:
+    """Everything needed to re-fly this run exactly as it was flown."""
+    from sim import DEFAULT_CONFIG, NO_WIND
+
+    config = report.sim_config or DEFAULT_CONFIG
+    wind = report.wind or NO_WIND
+    return {
+        "config": config.model_dump(mode="json"),
+        "wind": wind.model_dump(mode="json"),
+        "distance_flown_m": round(report.distance_flown, 2),
+        "crashed": bool(getattr(report, "crashed", False)),
+        "duration_s": round(report.duration, 2),
+        "battery_remaining_pct": round(report.battery_remaining, 2),
     }
 
 

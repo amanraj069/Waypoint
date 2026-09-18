@@ -81,7 +81,7 @@ def test_the_run_file_is_self_contained(tmp_path):
     assert run["verification"] == {"passed": True, "violations": []}
     assert run["constraints"]["max_altitude"] == DEFAULT_CONSTRAINTS.max_altitude
     assert run["created_at"]
-    assert run["schema_version"] == 1
+    assert run["schema_version"] == 2
 
 
 def test_every_tick_is_recorded_with_full_telemetry(tmp_path):
@@ -92,11 +92,67 @@ def test_every_tick_is_recorded_with_full_telemetry(tmp_path):
 
     assert len(run["ticks"]) == len(report.states)
     for tick, state in zip(run["ticks"], report.states):
-        assert tick == {
-            "x": state.x, "y": state.y, "z": state.z,
-            "velocity": state.velocity, "heading": state.heading,
-            "battery_pct": state.battery_pct, "timestamp": state.timestamp,
-        }
+        assert tick["x"] == state.x and tick["y"] == state.y and tick["z"] == state.z
+        assert (tick["vx"], tick["vy"], tick["vz"]) == state.velocity_vector
+        assert tick["velocity"] == state.velocity
+        assert tick["heading"] == state.heading
+        assert tick["battery_pct"] == state.battery_pct
+        assert tick["timestamp"] == pytest.approx(state.timestamp)
+        assert tick["subtask"] == state.subtask
+
+
+def test_the_run_file_carries_the_simulator_settings(tmp_path):
+    """Schema 2: everything needed to re-fly the run exactly, and to animate it."""
+    from sim import FaultEvent, FaultSchedule, FaultType, Trigger, Wind
+
+    faults = FaultSchedule.of(
+        FaultEvent(type=FaultType.WIND_GUST, trigger=Trigger(time=3.0), magnitude=6.0, duration=2.0)
+    )
+    report = run_mission(
+        "survey the north field",
+        verbose=False,
+        planner=fake_planner,
+        runs_dir=tmp_path,
+        wind=Wind(vector=(2.0, 0.0, 0.0)),
+        faults=faults,
+    )
+    run = json.loads(report.run_file.read_text())
+
+    assert run["sim"]["wind"]["vector"] == [2.0, 0.0, 0.0]
+    assert run["sim"]["config"]["dt"] == 0.1
+    assert run["sim"]["distance_flown_m"] > 0
+    assert [f["type"] for f in run["faults"]] == ["WIND_GUST"]
+    assert any(e["type"] == "FAULT" for e in run["events"])
+    assert run["events"][-1]["type"] == "LANDED"
+
+
+def test_obstacles_are_recorded_for_the_viewer(tmp_path):
+    from planner import Obstacle
+    from sim import FaultEvent, FaultSchedule, FaultType, Trigger
+
+    constraints = DEFAULT_CONSTRAINTS.model_copy(
+        update={"obstacles": [Obstacle(x=200, y=200, radius=4, name="silo")], "min_separation": 5.0}
+    )
+    faults = FaultSchedule.of(
+        FaultEvent(
+            type=FaultType.OBSTACLE_APPEARS,
+            trigger=Trigger(time=2.0),
+            obstacle=Obstacle(x=10, y=40, radius=6, name="crane"),
+        )
+    )
+    report = run_mission(
+        "survey the north field",
+        constraints,
+        verbose=False,
+        planner=fake_planner,
+        runs_dir=tmp_path,
+        faults=faults,
+    )
+    run = json.loads(report.run_file.read_text())
+
+    assert [o["name"] for o in run["obstacles"]] == ["silo", "crane"]
+    assert run["obstacles"][0]["appeared_at"] == 0.0  # known from the start
+    assert run["obstacles"][1]["appeared_at"] >= 2.0  # found mid-flight
 
 
 def test_waypoints_keep_their_subtask_names(tmp_path):
@@ -115,13 +171,19 @@ def test_waypoints_keep_their_subtask_names(tmp_path):
 
 
 def test_ticks_are_printed_as_well_as_collected(capsys, tmp_path):
-    """Saving must not have replaced the console output."""
+    """Saving must not have replaced the console output.
+
+    The simulator ticks at 10 Hz, so the console shows a sample -- but always
+    the first tick and the touchdown.
+    """
     report = run_mission("survey the north field", planner=fake_planner, runs_dir=tmp_path)
     out = capsys.readouterr().out
 
     assert report.states
-    for state in report.states:
-        assert f"t={state.timestamp:6.1f}s" in out
+    printed = [line for line in out.splitlines() if "t=" in line and "pos=" in line]
+    assert 1 < len(printed) < len(report.states)
+    assert f"t={report.states[0].timestamp:6.1f}s" in out
+    assert f"batt={report.states[-1].battery_pct:5.1f}%" in out
     assert str(report.run_file) in out
 
 
