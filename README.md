@@ -16,7 +16,7 @@ natural language mission
         -> replan loop back into planner           [wired: a rejected plan goes back with the reasons]
 ```
 
-There are two ways in. **The studio** is a web application — pick a place, look
+There are two ways in. **The studio** is a web application: pick a place, look
 around it in 3D, type what you want, and watch each stage happen:
 
 ```bash
@@ -43,6 +43,7 @@ on its own. Both drive the same pipeline; neither is a wrapper around the other.
 | `api/`          | FastAPI over the pipeline: worlds, missions (streamed as they happen), runs |
 | `web/`          | The studio: Next.js + react-three-fiber, the 3D view and the mission box |
 | `viewer/`       | `index.html`: the original single-file three.js replay, no build step |
+| `gazebo/`       | Gazebo as the 3D view: a run becomes an SDF world, and the flight is replayed in it |
 
 ## Configuration
 
@@ -72,9 +73,9 @@ also needs Node 20 or newer, once:
 cd web && npm install && cd ..
 ```
 
-If you only want the CLI, `".[dev]"` is enough — `web` is just FastAPI and
+If you only want the CLI, `".[dev]"` is enough; `web` is just FastAPI and
 uvicorn, and nothing outside `api/` imports them. A Gemini key is only
-required to *plan* a new mission — flying and replaying work without one:
+required to *plan* a new mission; flying and replaying work without one:
 
 ```bash
 cp .env.example .env                    # then put your Gemini key in it
@@ -119,31 +120,31 @@ ready. Ctrl-C to stop both.
 
 The page has two columns. On the left, one sidebar holding everything *about*
 the mission: **where** (the places below, plus anything you have imported),
-**this place**, and the pipeline as it runs — **pipeline**, **plan**,
+**this place**, and the pipeline as it runs: **pipeline**, **plan**,
 **verifier** with each violation spelled out, and the **log**. On the right, the
 place itself, the transport bar, and **the mission box**, where you type the
 instruction; every named place in the world is a chip under the box, so you can
 click "Bara Gumbad" rather than guess what it is called.
 
-Every panel folds, and so does the whole sidebar — `⟨⟨` collapses it to a rail
+Every panel folds, and so does the whole sidebar: `⟨⟨` collapses it to a rail
 and gives the 3D view the full width, `⟩⟩` brings it back. All of it is
 remembered, so the layout you arrive at is the layout you left.
 
-**Folding things away.** Every panel folds — click its title. A mission you are
+**Folding things away.** Every panel folds; click its title. A mission you are
 watching does not need the world list, and a place you are studying does not
 need the log. What you fold stays folded: the state is kept per panel in
 `localStorage`, so the layout you arrive at is the layout you left.
 
 **Light or dark.** The switch is in the top bar, and it remembers. With no
 choice stored it follows your system. Both palettes are defined once as CSS
-variables in `web/app/globals.css` — and the 3D view reads the *same* variables,
+variables in `web/app/globals.css`, and the 3D view reads the *same* variables,
 so the scene can never be dark while its chrome is light: the ground, the
 buildings and the name plates all change with the page. A small script in the
 layout applies your stored choice before the first paint, so there is no flash
 of the wrong palette on the way in.
 
 **Choosing where it takes off.** Both pads are on screen from the moment a
-world loads — a green one for the start, an amber one for the landing, each a
+world loads: a green one for the start, an amber one for the landing, each a
 lit disc with a beam and a name plate so you can find them from across a city.
 Until you move the landing pad it sits on the launch pad, which is what "comes
 home" looks like.
@@ -160,7 +161,7 @@ anything: the planner is told the aircraft is standing there and writes a plan
 that climbs from it and lands back on it, the verifier measures the first leg
 from it, and the simulator starts the aircraft on it. The altitude comes from
 the ground under the spot you picked, so a pad on a hillside is at the height of
-that hillside — you never have to work it out.
+that hillside; you never have to work it out.
 
 **And where it puts down.** **set landing** does the same for the other end, in
 amber so the two pads are never confused. Leave it alone and the aircraft comes
@@ -169,7 +170,7 @@ home; set it and the plan ends somewhere else.
 A landing point gets more scrutiny than a launch point, because a patch of
 ground that is perfectly clear can still be useless: ground that falls away
 under the skids is how a multirotor tips over on touchdown. So the spot is
-*surveyed* rather than assumed — the ground is sampled across the aircraft's
+*surveyed* rather than assumed: the ground is sampled across the aircraft's
 own 6 m footprint, and a site is only usable if it slopes no more than 8° and
 rises or falls no more than 0.9 m across that footprint.
 
@@ -177,11 +178,11 @@ Click somewhere that will not do and the pad does not go there. It moves to the
 nearest ground that will, within 120 m, and says what happened:
 
 ```
-moved the landing 112 m to level ground — the ground falls 3.4 m
+moved the landing 112 m to level ground: the ground falls 3.4 m
 across the 6 m pad (30°), too uneven to set down on
 ```
 
-If nothing within 120 m would do — a 45° face in Munnar, say — it refuses
+If nothing within 120 m would do (a 45° face in Munnar, say), it refuses
 outright rather than putting you somewhere surprising. The survey lives in
 `world/landing.py` and runs on the server, so the pad you are looking at cannot
 disagree with the flight you get; the browser asks
@@ -189,14 +190,14 @@ disagree with the flight you get; the browser asks
 
 Two things it will refuse. Starting inside a building (it moves you off it), and
 moving either pad under a *bundled* plan, whose waypoints are absolute and whose
-last one lands where it was written — for that, write the mission in English
+last one lands where it was written; for that, write the mission in English
 instead.
 
 When the flight is written the middle column loads it and plays it. `/runs` is
 every flight this machine has made; opening one gives the full replay, with the
 onboard photographs rendered from the aircraft's own pose at each `CAPTURE`.
 
-**Without a Gemini key the box is disabled and the bundled plans are not** — each
+**Without a Gemini key the box is disabled and the bundled plans are not**: each
 world ships with a verified plan you can fly, which exercises the verifier, the
 simulator, the fault injection and the replay without spending a token.
 
@@ -222,7 +223,7 @@ curl -N localhost:8000/api/missions/m1-49e180/events
 ### 1. Look around, then just say what you want, at a prompt
 
 The quickest way in. It opens the world in your browser with nothing flying in
-it, so you can orbit around and see what you are dealing with — then you type
+it, so you can orbit around and see what you are dealing with, then you type
 missions at a prompt and watch each one appear in the page you are already
 looking at.
 
@@ -246,8 +247,8 @@ mission> photograph Bara Gumbad from two sides, then fly north up the ashoka
   169s | 933 m flown | 74.0% battery left | landed
 ```
 
-It flanked the 22 m tomb to get two angles, ran the avenue at 25 m — over the
-16 m ashokas, not between them — and dropped to 8 m for the water.
+It flanked the 22 m tomb to get two angles, ran the avenue at 25 m (over the
+16 m ashokas, not between them) and dropped to 8 m for the water.
 
 ```
 central vista (procedural): 66 obstacles (44 trees), tallest roof 80 m, ground -0..26 m
@@ -270,7 +271,7 @@ The browser follows along by itself: it shows the world first, says *planning*,
 then *flying*, then loads the finished run and plays it. Type another mission
 and it does the whole thing again.
 
-Note the altitude the planner chose — 95 m, to clear a 42 m building standing
+Note the altitude the planner chose: 95 m, to clear a 42 m building standing
 on ground that has itself climbed 24 m up Raisina Hill. It reads the terrain
 and the structures out of the world description before it commits to a route.
 
@@ -280,8 +281,8 @@ giving up. That is the replan loop closing: the model proposes, the deterministi
 checker disposes, and the reasons are specific enough to fix.
 
 **Switching worlds from the page.** The control bar has a world picker
-alongside the run picker. It lists everything in `worlds/` — the four built-in
-ones are written there the first time you serve — and choosing one shows it
+alongside the run picker. It lists everything in `worlds/` (the four built-in
+ones are written there the first time you serve), and choosing one shows it
 immediately. If a session is running, the page also tells it to switch, so your
 *next mission flies in the world you just picked*. It works the other way too:
 `/world` at the prompt reloads the page.
@@ -313,7 +314,7 @@ Your browser opens on `http://localhost:8765/viewer/index.html?run=/runs/<file>`
 and the flight animates immediately: the aircraft climbs, flies the survey
 pattern, gets shoved sideways by a squall, watches a crane appear beneath it,
 drifts off course when its GPS slips, and lands. The terminal prints the flight
-log alongside. Press **Ctrl-C** in the terminal when you are done — that stops
+log alongside. Press **Ctrl-C** in the terminal when you are done; that stops
 the server.
 
 Without `--serve` the run is still written and the command prints the exact
@@ -361,7 +362,7 @@ python scripts/simulate.py --plan examples/plans/north_field_and_tower.json --fa
 ```
 
 `--faults` takes `sample` (the built-in demo schedule, the default), `none`, or
-a path to a schedule JSON — copy `examples/faults/storm.json` and edit it. Other
+a path to a schedule JSON; copy `examples/faults/storm.json` and edit it. Other
 flags: `--dt` for tick length, `--runs-dir`, `--quiet`, `--force` to fly a plan
 that failed verification.
 
@@ -369,7 +370,7 @@ For a sense of scale on the same plan: calm and fault-free is 142 s and lands
 with 81% battery; `storm.json` costs 12 more points of battery and pushes the
 touchdown 20 m off the pad; `--wind 2,0,0 --blind` takes 453 s because the
 aircraft keeps overshooting into the wind. Push `--blind` past about 3 m/s and
-it never converges — it drifts downwind until the battery empties and lands
+it never converges; it drifts downwind until the battery empties and lands
 wherever it is, which is realistic but writes a very large run file.
 
 ### 5. Give it your own mission in English (needs a Gemini key)
@@ -406,7 +407,7 @@ as the aircraft flies it, so the model's decomposition and the flight are the
 same object seen two ways. Click a phase to jump to it.
 
 `--save` writes the generated plan to a file, so you can re-fly the same mission
-as often as you like — different wind, different faults — without spending
+as often as you like (different wind, different faults) without spending
 another token:
 
 ```bash
@@ -435,15 +436,65 @@ python scripts/try_verifier.py --plan examples/plans/north_field_and_tower.json 
     --shrink 0.3 --hazards                                      # verifier only, no tokens
 ```
 
+### 7. Watch it in Gazebo
+
+Gazebo (gz-sim, Harmonic or newer; Homebrew's `gz-jetty` works) can stand in for
+the browser views. Every run file becomes a Gazebo world: the terrain as a mesh
+coloured by ground cover, each building as a named model, the trees, the
+geofence and no-fly zones as glass, the planned route as beads coloured by
+action, and the launch and landing pads. The aircraft is then flown through it
+from the run's ticks, with a chase camera and a magenta trail, and obstacles
+that appear mid-flight are spawned when the flight reaches them.
+
+Gazebo's Python bindings are built for Homebrew's Python, not the project's, so
+the process that talks to Gazebo runs in a small side environment. Make it once:
+
+```bash
+/opt/homebrew/bin/python3.14 -m venv --system-site-packages .venv-gz
+.venv-gz/bin/python -m pip install protobuf
+```
+
+Then:
+
+```bash
+# fly a plan and watch it in Gazebo instead of the browser
+python scripts/simulate.py --plan examples/plans/lodhi_garden_tour.json --world lodhi --gazebo
+
+# replay the newest run, or any run file, at any speed
+python scripts/gazebo_view.py --latest --speed 2
+python scripts/gazebo_view.py runs/<mission>_<stamp>.json
+
+# a place on its own, nothing flying
+python scripts/gazebo_view.py --world munnar
+
+# plan with Gemini, then watch the flight
+python -m orchestrator.run --mission "survey the north field" --gazebo
+```
+
+The launcher starts the gz server and the GUI as separate processes (on macOS
+they cannot share one) plus `gazebo/bridge.py`. It prints the flight log as it
+plays, and when the flight is over it leaves the window open until you close it.
+The scene is written to `~/.cache/waypoint/gazebo/<mission>/`, because SDF mesh
+URIs do not survive the spaces in a path like `VS Code/`.
+
+The physics you watch is still ours: Gazebo runs with gravity off, and the
+aircraft is posed from the simulator's ticks, so the flight in the window is
+exactly the flight the verifier passed and the run file recorded. Putting PX4
+SITL underneath instead (Gazebo as PX4's physics, MAVSDK uploading the plan)
+would be a new `sim` backend; the world export here is the half of that already
+done.
+
 ### Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
 | `No run files with telemetry in runs/` | Fly one first: `python scripts/simulate.py --plan examples/plans/north_field_and_tower.json` |
-| `port 8765 is already in use` | It just moves to 8766 and tells you — the URL it prints is the one to open. To reclaim the port: `lsof -ti:8765 \| xargs kill` |
+| `port 8765 is already in use` | It just moves to 8766 and tells you; the URL it prints is the one to open. To reclaim the port: `lsof -ti:8765 \| xargs kill` |
 | Viewer page loads but stays empty | three.js comes from a CDN, so the first load needs internet; check the browser console |
-| `zsh: command not found: python` | macOS has no bare `python` — use `.venv/bin/python`, or `source .venv/bin/activate` first |
-| `ModuleNotFoundError: shapely` (or `pydantic`) | You are on a system `python3` — use `.venv/bin/python` |
+| `zsh: command not found: python` | macOS has no bare `python`; use `.venv/bin/python`, or `source .venv/bin/activate` first |
+| `ModuleNotFoundError: shapely` (or `pydantic`) | You are on a system `python3`; use `.venv/bin/python` |
+| `no Python can import Gazebo's bindings` | Make `.venv-gz` as shown in [Watch it in Gazebo](#7-watch-it-in-gazebo), or point `WAYPOINT_GZ_PYTHON` at a Python that can `import gz.transport` |
+| Gazebo window opens but the aircraft never moves | A previous run is still holding the world: `pkill -f gz-sim-main`, then try again |
 | Plan rejected before flying | That is the verifier doing its job; the report says which waypoint and why. `--force` flies it anyway |
 
 ## Planner
@@ -460,7 +511,7 @@ decodes and validates into the `Plan` model or raises:
 | Tool arguments that don't form a valid `Plan` (bad enum, speed <= 0, empty plan, wrong types) | `PlanValidationError` |
 
 Both subclass `PlannerError`. There is no free-text fallback and no silent
-default — a bad plan never reaches the verifier looking like a good one.
+default: a bad plan never reaches the verifier looking like a good one.
 
 `replan(mission_text, previous_plan, violation_report, constraints)` re-prompts
 with the rejected plan and the verifier's exact reasons, for the feedback loop.
@@ -476,7 +527,7 @@ gemini-3.6-flash -> gemini-3.5-flash -> gemini-3.7-flash -> gemini-2.5-flash -> 
 ```
 
 It shifts on 408/429/500/502/503/504 and on connection or timeout errors, and
-logs a warning each time. It does **not** shift on 400/401/403 — a bad request
+logs a warning each time. It does **not** shift on 400/401/403; a bad request
 or a bad key fails identically on every model, so those fail fast on the first
 rung. A malformed *plan* does not shift either: that is a planning failure, not
 an availability one. If every rung fails, `PlannerAPIError` lists each attempt.
@@ -490,8 +541,8 @@ python scripts/try_planner.py "survey the north field and return to base"
 ## Verifier
 
 `verify(plan, constraints)` is the gate between the planner and the aircraft. It
-is 100% deterministic — plain `shapely` geometry and arithmetic, no model, no
-sampling — so the same plan and constraints always produce the same report. It
+is 100% deterministic (plain `shapely` geometry and arithmetic, no model, no
+sampling), so the same plan and constraints always produce the same report. It
 runs every check rather than stopping at the first failure, so one replan can
 fix everything at once.
 
@@ -519,7 +570,7 @@ geofence polygon, leaving a few metres of margin.
 ```
 
 `result.passed` is False when any **blocking** violation (`ERROR` or `CRITICAL`)
-was found. `WARNING` findings — a marginal turn, a waypoint hugging the fence —
+was found. `WARNING` findings (a marginal turn, a waypoint hugging the fence)
 are reported but do not reject a plan. `result.messages()` hands the
 descriptions to `planner.replan()`.
 
@@ -539,7 +590,7 @@ The *aircraft* model lives on `VerifierConfig` and is fully configurable:
 | `home` | (0, 0, 0) | Start and end point, so the first leg is home → waypoint 0 |
 
 Bad *constraints* (a self-intersecting geofence, a degenerate no-fly polygon)
-raise `ValueError`. A bad *plan* never raises — it comes back as violations.
+raise `ValueError`. A bad *plan* never raises; it comes back as violations.
 
 Manual check against a real plan (the first form spends tokens):
 
@@ -565,7 +616,7 @@ dimensions rather than downloaded, so they are identical on every machine:
 | Name | Place | What it is for |
 | --- | --- | --- |
 | `delhi` | The Central Vista, New Delhi | Terrain that matters: the Secretariat is 42 m tall on ground that has climbed 24 m, so its roof is 66 m up |
-| `lodhi` | Lodhi Garden, New Delhi | Named things to point at — five tombs, a lake, an avenue of ashokas, and Safdarjung's 47 m dome over the wall |
+| `lodhi` | Lodhi Garden, New Delhi | Named things to point at: five tombs, a lake, an avenue of ashokas, and Safdarjung's 47 m dome over the wall |
 | `chowk` | Chandni Chowk, Old Delhi | A 30 m street between unbroken shopfronts: the hard case for wind and GPS drift |
 | `munnar` | The Kannan Devan hills, Kerala | 235 m of relief, a reservoir and a dam, and almost nothing built |
 
@@ -585,13 +636,13 @@ still work and mean `delhi`, `lodhi`, `chowk` and `munnar`.
 Distances are not always the real ones. The Central Vista is 2.6 km end to end
 and the aircraft has about 3.2 km of battery, so it is laid out at roughly a
 third scale; Munnar's 1100 m of relief is compressed to 235 m. **Heights are
-real** — India Gate is 42 m, the Jama Masjid's minarets are 41 m, Safdarjung's
-dome is 47 m — because the heights are what the planner has to reason about.
+real** (India Gate is 42 m, the Jama Masjid's minarets are 41 m, Safdarjung's
+dome is 47 m) because the heights are what the planner has to reason about.
 Each builder's docstring says what it compressed.
 
 ### Landmarks: how you say what you want
 
-A world can carry **landmarks** — named places with a position and an extent.
+A world can carry **landmarks**: named places with a position and an extent.
 They are not solid (anything you can hit is a building); they exist so a mission
 can be *said*. The planner is given the list, so "photograph Bara Gumbad"
 becomes waypoints instead of a shrug:
@@ -624,8 +675,8 @@ with a clear message). Heights come from the `height` tag, or
 
 **Every building carries a name**, in the built-in worlds and the imported ones.
 Most OSM buildings are anonymous, so the importer falls back from the `name` tag
-through the address to the building type — `12 Colaba Causeway`, `apartments 7`,
-`unnamed block 213` — and promotes the named, notable ones to landmarks, so a
+through the address to the building type (`12 Colaba Causeway`, `apartments 7`,
+`unnamed block 213`) and promotes the named, notable ones to landmarks, so a
 place nobody hand-authored still has things a mission can refer to by name.
 
 Worlds are saved to `worlds/<name>.json` and embedded in each run file, so a
@@ -660,8 +711,8 @@ t= 47.7s  COLLISION  struck 'Fatehpuri Masjid' at (-286, 0), 26 m tall
                      at (-255.2, 0.0, 14.0) doing 6.0 m/s -- its roof is at 26 m
 ```
 
-The plan is verified safe — it runs down the middle of the street and stops
-20 m short of the mosque that closes its west end — and the aircraft hits the
+The plan is verified safe (it runs down the middle of the street and stops
+20 m short of the mosque that closes its west end), and the aircraft hits the
 mosque anyway, because GPS drift moves where it *thinks* it is while Fatehpuri
 Masjid stays where it has been since 1650. That is a capability you cannot test
 in empty space.
@@ -670,7 +721,7 @@ in empty space.
 
 `worlds/gateway_of_india.json` ships with the project: 118 real footprints from
 OpenStreetMap around Colaba, Mumbai, 80 of them carrying the name their mapper
-gave them — the Taj Mahal Palace, the Royal Bombay Yacht Club, Regal Cinema,
+gave them: the Taj Mahal Palace, the Royal Bombay Yacht Club, Regal Cinema,
 Dhanraj Mahal, the Gateway of India itself. Build another anywhere:
 
 ```bash
@@ -682,7 +733,7 @@ The trade is accuracy for completeness: the footprints are survey-accurate and
 the heights usually are not, because most buildings have no `height` tag and
 fall back to `building:levels × 3.2 m` or a 9 m default. OSM says the Taj Mahal
 Palace is 19 m; it is nearer 85. The hand-authored worlds are the other way
-round — approximate plans, real heights.
+round: approximate plans, real heights.
 
 The verifier names whatever it rejects, which is what makes a rejection
 actionable:
@@ -695,8 +746,8 @@ below the 325 m roof. Route around the building, or climb above its roof.
 
 When `--world` is given the geofence widens to the world's bounds, since the
 default practice area is smaller than a city; `--keep-geofence` turns that off.
-The API does the same, and also raises the ceiling when the world needs it —
-nothing could be flown over Anamudi under a 120 m ceiling — and says so.
+The API does the same, and also raises the ceiling when the world needs it
+(nothing could be flown over Anamudi under a 120 m ceiling) and says so.
 
 
 ## Simulator
@@ -768,14 +819,14 @@ python scripts/simulate.py --plan /tmp/plan.json --faults my_scenario.json
 ## 3D views
 
 The view draws **on demand**: while a replay is playing it animates, and the
-moment it is paused — or while you are simply looking at a place — it stops
+moment it is paused (or while you are simply looking at a place), it stops
 drawing entirely and costs nothing. Orbiting, seeking, toggling labels and
 loading a world each ask for the frames they need. Nothing idles: the rotors
 only turn while the aircraft is flying, because a scene that is never still can
 never stop being drawn.
 
 Geometry is merged by kind, so a city is a handful of draw calls rather than one
-per building plus one per outline — the Gateway of India's 118 structures go
+per building plus one per outline: the Gateway of India's 118 structures go
 from 238 meshes to 3. Photographs render into an offscreen target, so the canvas
 does not have to preserve its drawing buffer on every frame of every flight for
 the sake of the occasional shot.
@@ -817,25 +868,25 @@ run files are covered without a key and without a network.
 
 ## Where the real pieces go
 
-- `planner/` — done. Tune `planner/prompts.py` (system prompt + example) rather
+- `planner/`: done. Tune `planner/prompts.py` (system prompt + example) rather
   than the call site.
-- `verifier/` — done. Tune the aircraft model in `VerifierConfig` rather than
+- `verifier/`: done. Tune the aircraft model in `VerifierConfig` rather than
   the checks; add a new check as a function in `verifier/checks.py` plus a
   `ViolationType`.
-- `sim/` — done. Tune the airframe in `SimConfig` and the disturbances in
+- `sim/`: done. Tune the airframe in `SimConfig` and the disturbances in
   `Wind` / `FaultSchedule`; bridging to PX4/Gazebo later means reimplementing
   `Executor.run()` and keeping the generator interface.
-- `feedback/stub_feedback.py` — set `replan_required=True` to trigger the
+- `feedback/stub_feedback.py`: set `replan_required=True` to trigger the
   adaptation loop. `orchestrator/loop.py` counts these in `MissionReport.replans`;
   `run_mission(planner=...)` already takes an injected planner for it. The
-  *verification* half of that loop is closed — `api/missions.py` and
+  *verification* half of that loop is closed: `api/missions.py` and
   `scripts/explore.py` both hand a rejected plan back to the planner with the
-  violations — but the *in-flight* half, replanning because of what the aircraft
+  violations, but the *in-flight* half, replanning because of what the aircraft
   saw, still goes through this stub.
-- `api/` — the routes are thin. New capability belongs in the packages they call,
+- `api/`: the routes are thin. New capability belongs in the packages they call,
   not here; `api/missions.py` is the only file with logic of its own, and that
   logic is the stage-by-stage reporting.
-- `web/` — `lib/scene/build.ts` is the 3D, `lib/useMission.ts` folds the event
+- `web/`: `lib/scene/build.ts` is the 3D, `lib/useMission.ts` folds the event
   stream into what the page draws, and `components/MissionBox.tsx` is the front
   door. There is no state library: the playhead is a plain object in
   `lib/playback.ts` because it moves at frame rate and React does not.

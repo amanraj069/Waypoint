@@ -101,7 +101,7 @@ def preview_world(world_id: str) -> dict:
     constraints, notes = constraints_for(world, None)
     return {
         "schema_version": 2,
-        "mission_text": f"{world.name} — nothing has flown here yet",
+        "mission_text": f"{world.name}: nothing has flown here yet",
         "preview": True,
         "constraints": constraints.model_dump(mode="json"),
         "constraint_notes": notes,

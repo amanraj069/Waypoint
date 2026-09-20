@@ -47,7 +47,7 @@ export interface Building {
   height: number;
   base: number;
   name: string;
-  /** building, tree, mast, pavilion, monument — how it is drawn and read. */
+  /** building, tree, mast, pavilion, monument: how it is drawn and read. */
   kind: string;
 }
 
@@ -62,7 +62,7 @@ export interface Landmark {
 }
 
 /**
- * Ground cover: what the ground is somewhere — a lawn, a road, a lake. Flat,
+ * Ground cover: what the ground is somewhere: a lawn, a road, a lake. Flat,
  * drawn onto the ground, and never an obstacle.
  */
 export interface Area {
@@ -149,7 +149,7 @@ export interface Violation {
 }
 
 /**
- * A run file, or a world preview — which is the same thing with no ticks in it,
+ * A run file, or a world preview, which is the same thing with no ticks in it,
  * so looking around a place and replaying a flight are one code path.
  */
 export interface Run {

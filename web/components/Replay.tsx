@@ -5,7 +5,7 @@
  *
  * Everything on this page is the same run seen from a different side: the plan
  * the model wrote, the telemetry the simulator produced, the events either of
- * them raised, and — the one thing that is neither — the photographs, which are
+ * them raised, and (the one thing that is neither) the photographs, which are
  * the scene re-rendered from the aircraft's own pose at the moment it reported
  * reaching a CAPTURE waypoint.
  */
@@ -139,12 +139,12 @@ export function Replay({ run, title }: { run: Run; title?: string }) {
           <div className="space-y-0.5">
             <Row label="time">{(sample?.time ?? 0).toFixed(1)} s</Row>
             <Row label="pos">
-              {tick ? `${tick.x.toFixed(1)}, ${tick.y.toFixed(1)}, ${tick.z.toFixed(1)}` : "—"}
+              {tick ? `${tick.x.toFixed(1)}, ${tick.y.toFixed(1)}, ${tick.z.toFixed(1)}` : "-"}
             </Row>
             {tick?.agl !== undefined && <Row label="agl">{tick.agl.toFixed(1)} m</Row>}
-            <Row label="speed">{sample ? `${sample.speed.toFixed(2)} m/s` : "—"}</Row>
-            <Row label="hdg">{tick ? `${tick.heading.toFixed(0)}°` : "—"}</Row>
-            <Row label="phase">{tick?.subtask || "—"}</Row>
+            <Row label="speed">{sample ? `${sample.speed.toFixed(2)} m/s` : "-"}</Row>
+            <Row label="hdg">{tick ? `${tick.heading.toFixed(0)}°` : "-"}</Row>
+            <Row label="phase">{tick?.subtask || "-"}</Row>
             <Row label="wind">
               {tick?.wind
                 ? `${Math.hypot(tick.wind[0], tick.wind[1]).toFixed(1)} m/s`
@@ -155,7 +155,7 @@ export function Replay({ run, title }: { run: Run; title?: string }) {
                 <span className="text-warn">{gpsError.toFixed(1)} m</span>
               </Row>
             )}
-            <Row label="batt">{tick ? `${tick.battery_pct.toFixed(1)} %` : "—"}</Row>
+            <Row label="batt">{tick ? `${tick.battery_pct.toFixed(1)} %` : "-"}</Row>
           </div>
           <div className="mt-1.5 h-0.5 bg-line">
             <div

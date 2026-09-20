@@ -6,7 +6,7 @@
  * One 3D view serves the whole page. Before a mission it holds the world you
  * picked, with nothing flying in it; during one it holds the same world while
  * the console fills up; when the flight is written it loads the finished run
- * and plays it. That continuity is the point — you never lose the place you
+ * and plays it. That continuity is the point: you never lose the place you
  * were looking at.
  */
 
@@ -77,7 +77,7 @@ export default function Studio() {
         if (live) {
           setLoadError(
             error instanceof Error
-              ? `${error.message} — is the API running? \`.venv/bin/python -m uvicorn api.main:app --port 8000\``
+              ? `${error.message}. Is the API running? \`.venv/bin/python -m uvicorn api.main:app --port 8000\``
               : String(error),
           );
         }
@@ -138,13 +138,13 @@ export default function Studio() {
       try {
         const site = await api.site(worldId, x, y);
         if (!site.usable) {
-          setSiteNote(`can't put down there — ${site.asked.why_not}`);
+          setSiteNote(`can't put down there: ${site.asked.why_not}`);
           return;
         }
         (role === "home" ? setHome : setLanding)([site.x, site.y]);
         setSiteNote(
           site.moved
-            ? `moved the ${role === "home" ? "start" : "landing"} ${site.moved.toFixed(0)} m to level ground — ${site.asked.why_not}`
+            ? `moved the ${role === "home" ? "start" : "landing"} ${site.moved.toFixed(0)} m to level ground: ${site.asked.why_not}`
             : `${role === "home" ? "start" : "landing"}: ground at ${site.elevation.toFixed(1)} m, ${site.slope_deg.toFixed(0)}° slope`,
         );
       } catch (error) {
@@ -188,7 +188,7 @@ export default function Studio() {
       )}
       {softwareRenderer && (
         <div className="border-b border-warn/40 bg-warn/10 px-4 py-2 text-warn">
-          This browser is drawing the 3D view in software ({softwareRenderer}), not on the GPU —
+          This browser is drawing the 3D view in software ({softwareRenderer}), not on the GPU,
           which costs many times the CPU for the same picture. Restart the browser to get hardware
           acceleration back, and check <span className="font-bold">chrome://gpu</span> if it keeps
           happening.

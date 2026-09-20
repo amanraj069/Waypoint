@@ -138,9 +138,9 @@ def _style(fig: go.Figure, run: dict) -> None:
             f"<span style='font-size:12px;color:#666'>{subtitle}</span>"
         ),
         scene=dict(
-            xaxis_title="x — east (m)",
-            yaxis_title="y — north (m)",
-            zaxis_title="z — altitude (m)",
+            xaxis_title="x: east (m)",
+            yaxis_title="y: north (m)",
+            zaxis_title="z: altitude (m)",
             # Equal scaling, or the altitude axis stretches and the path lies.
             aspectmode="data",
         ),

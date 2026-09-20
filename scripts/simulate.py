@@ -10,6 +10,9 @@
     # a calm, fault-free reference run
     python scripts/simulate.py --plan /tmp/plan.json --faults none
 
+    # watch it fly in Gazebo instead of the browser viewer
+    python scripts/simulate.py --plan examples/plans/lodhi_garden_tour.json --world lodhi --gazebo
+
 The plan is verified before it flies -- the simulator is not a way around the
 safety gate -- and the finished run is written to runs/<mission>_<stamp>.json,
 which `viewer/index.html` loads directly.
@@ -221,6 +224,8 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--force", action="store_true", help="Fly even if verification fails.")
     parser.add_argument("--serve", action="store_true", help="Open the 3D viewer on this run.")
     parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--gazebo", action="store_true", help="Watch this run fly in Gazebo.")
+    parser.add_argument("--speed", type=float, default=1.0, help="Gazebo playback speed.")
     args = parser.parse_args(argv)
 
     if not args.mission and not args.plan:
@@ -322,6 +327,15 @@ def main(argv: list[str]) -> int:
     report.run_file = write_run(report, runs_dir=args.runs_dir)
     print(f"\n  run written to {report.run_file}")
 
+    if args.gazebo:
+        from gazebo.launch import GazeboError, play  # noqa: PLC0415 -- optional path
+        from orchestrator.runlog import read_run  # noqa: PLC0415
+
+        try:
+            return play(read_run(report.run_file), speed=args.speed)
+        except GazeboError as exc:
+            print(f"Gazebo: {exc}", file=sys.stderr)
+            return 1
     if args.serve:
         from serve_viewer import serve  # noqa: PLC0415 -- optional path
 

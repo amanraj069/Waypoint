@@ -450,7 +450,7 @@ def run_mission(mission: Mission) -> None:
     outcome = "landed" if report.completed else "crashed" if report.crashed else "did not land cleanly"
     mission.finish(
         "done",
-        f"{outcome} — {report.duration:.0f} s, {report.distance_flown:.0f} m, "
+        f"{outcome}, {report.duration:.0f} s, {report.distance_flown:.0f} m, "
         f"{report.battery_remaining:.0f}% battery left",
         outcome=outcome,
         duration_s=round(report.duration, 1),

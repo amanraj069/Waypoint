@@ -3,8 +3,8 @@
 /**
  * The 3D view: a place, and whatever has been flown through it.
  *
- * A world preview and a finished flight are the same object here — a preview is
- * just a run with no telemetry — so looking around before you ask for something
+ * A world preview and a finished flight are the same object here: a preview is
+ * just a run with no telemetry, so looking around before you ask for something
  * and watching what you asked for are one component, not two.
  */
 
@@ -13,7 +13,7 @@
  * React: `useFrame` moves the aircraft, clips the trail and fades an obstacle
  * sixty times a second, and re-rendering the tree to do it would be both slower
  * and wrong. React Compiler's immutability rule models React state, which these
- * objects are not — they are created once per run and driven imperatively, the
+ * objects are not; they are created once per run and driven imperatively, the
  * way react-three-fiber is meant to be used. Everything React *does* own here
  * (the run, the labels flag, the capture handle) is still ordinary props.
  */
@@ -31,7 +31,9 @@ import {
   buildScene,
   disposeObject,
   elevationAt,
+  flownShown,
   probeGround,
+  showFlownTo,
   tintPad,
 } from "@/lib/scene/build";
 import { frameAt, lerp, type Playback } from "@/lib/playback";
@@ -134,7 +136,7 @@ function Scene({
    *
    * The pointer is raycast onto the terrain itself, so the pad follows the
    * hillside rather than a flat plane, and its height is re-read from the
-   * ground on every move. The colour warns as you go — `world/landing.py` has
+   * ground on every move. The colour warns as you go: `world/landing.py` has
    * the last word when you let go, but a pad that is going to be refused
    * should not look fine until then.
    */
@@ -284,8 +286,8 @@ function Scene({
    * Is this actually being drawn by the GPU?
    *
    * Chrome falls back to a software rasteriser when it loses hardware
-   * acceleration — after a GPU process crash, or when too many WebGL contexts
-   * are open — and then quietly renders every frame on the CPU across a dozen
+   * acceleration (after a GPU process crash, or when too many WebGL contexts
+   * are open) and then quietly renders every frame on the CPU across a dozen
    * threads. It looks the same and costs an order of magnitude more, so the
    * page should say so rather than let you wonder why the fan is loud.
    */
@@ -333,11 +335,11 @@ function Scene({
       const wasDrone = aircraft.drone.visible;
       const wasGhost = gps.ghost.visible;
       const wasLink = gps.link.visible;
-      const range = built.flown.geometry.drawRange.count;
+      const range = flownShown(built.flown);
       aircraft.drone.visible = false;
       gps.ghost.visible = false;
       gps.link.visible = false;
-      built.flown.geometry.setDrawRange(0, Math.max(1, tickIndex + 1));
+      showFlownTo(built.flown, tickIndex);
 
       const from = new THREE.Vector3(tick.x, tick.z, -tick.y);
       photo.camera.position.copy(from);
@@ -367,7 +369,7 @@ function Scene({
       aircraft.drone.visible = wasDrone;
       gps.ghost.visible = wasGhost;
       gps.link.visible = wasLink;
-      built.flown.geometry.setDrawRange(0, range);
+      showFlownTo(built.flown, range);
       return photo.canvas.toDataURL("image/jpeg", 0.82);
     };
     return () => {
@@ -418,7 +420,7 @@ function Scene({
     const speed = lerp(a.velocity, b.velocity, k);
     aircraft.drone.rotation.z = -THREE.MathUtils.degToRad(Math.min(18, speed * 1.6));
 
-    built.flown?.geometry.setDrawRange(0, Math.max(1, index + 1));
+    if (built.flown) showFlownTo(built.flown, index);
 
     const drift = a.gps_offset;
     if (drift && (drift[0] || drift[1] || drift[2])) {
@@ -457,8 +459,8 @@ function Scene({
         color={theme === "light" ? 0xfff1dc : 0xffffff}
         intensity={theme === "light" ? 2.1 : 1.5}
         castShadow
-        shadow-mapSize-width={4096}
-        shadow-mapSize-height={4096}
+        shadow-mapSize-width={2048}
+        shadow-mapSize-height={2048}
         shadow-bias={-0.0004}
         shadow-normalBias={0.8}
       />

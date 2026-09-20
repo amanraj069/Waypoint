@@ -3,7 +3,7 @@
  *
  * The scene is dark so the flight data reads as instrument colour against it:
  * the ground and the buildings are desaturated, and only the things a mission
- * is actually about — the route, the fence, a hazard, a landmark — carry hue.
+ * is actually about (the route, the fence, a hazard, a landmark) carry hue.
  */
 
 /**
@@ -38,6 +38,8 @@ export function sceneColors() {
 export const COLORS = {
   background: 0x0a0d11,
   flown: 0x4cc2ff,
+  /** The flown path: a hue nothing else in the scene uses, so it reads over any ground. */
+  trail: 0xff1fd1,
   planned: 0x8899aa,
   fence: 0x45d08a,
   nofly: 0xff5c5c,

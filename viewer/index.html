@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Waypoint — flight replay</title>
+<title>Waypoint · flight replay</title>
 <style>
   :root {
     --bg: #0a0c0e;
@@ -147,13 +147,13 @@
       <div class="mission" id="mission">no run loaded</div>
       <div id="status"></div>
       <div class="row"><span>time</span><b id="v-time">0.0 s</b></div>
-      <div class="row"><span>pos</span><b id="v-pos">—</b></div>
-      <div class="row"><span>speed</span><b id="v-speed">—</b></div>
-      <div class="row"><span>hdg</span><b id="v-hdg">—</b></div>
-      <div class="row"><span>phase</span><b id="v-task">—</b></div>
+      <div class="row"><span>pos</span><b id="v-pos">-</b></div>
+      <div class="row"><span>speed</span><b id="v-speed">-</b></div>
+      <div class="row"><span>hdg</span><b id="v-hdg">-</b></div>
+      <div class="row"><span>phase</span><b id="v-task">-</b></div>
       <div class="row"><span>wind</span><b id="v-wind">calm</b></div>
-      <div class="row" id="gps-row" hidden><span>gps err</span><b id="v-gps">—</b></div>
-      <div class="row"><span>batt</span><b id="v-batt">—</b></div>
+      <div class="row" id="gps-row" hidden><span>gps err</span><b id="v-gps">-</b></div>
+      <div class="row"><span>batt</span><b id="v-batt">-</b></div>
       <div class="bar"><i id="v-battbar" style="width:100%"></i></div>
       <div id="faults"></div>
     </div>
@@ -222,7 +222,7 @@
   </div>
 </div>
 
-<div class="hint">h — hide panels &middot; l — labels &middot; drag a panel edge to resize</div>
+<div class="hint">h: hide panels &middot; l: labels &middot; drag a panel edge to resize</div>
 
 <div id="splash"><div class="box">
   <h1>Waypoint</h1>
@@ -722,7 +722,7 @@ function updateHud(tick, speed, time) {
   $('v-pos').textContent = `${tick.x.toFixed(1)}, ${tick.y.toFixed(1)}, ${tick.z.toFixed(1)}`;
   $('v-speed').textContent = `${speed.toFixed(2)} m/s`;
   $('v-hdg').textContent = `${tick.heading.toFixed(0)}°`;
-  $('v-task').textContent = tick.subtask || '—';
+  $('v-task').textContent = tick.subtask || '-';
   highlightPhase(tick.subtask);
   $('v-batt').textContent = `${tick.battery_pct.toFixed(1)} %`;
 
@@ -953,7 +953,7 @@ function loadRun(data, label) {
   // No ticks and a world: this is a look around the place before anything flies.
   const preview = !data.ticks.length && !!data.world;
   if (!data.ticks.length && !preview) {
-    return fail(`${label ?? 'That file'} has no telemetry — a mission that failed verification never flies.`);
+    return fail(`${label ?? 'That file'} has no telemetry; a mission that failed verification never flies.`);
   }
 
   run = data;
@@ -1007,7 +1007,7 @@ async function populateWorldList() {
     for (const entry of worlds) {
       const option = document.createElement('option');
       option.value = entry.url;
-      option.textContent = `${entry.name} — ${entry.detail}`;
+      option.textContent = `${entry.name}: ${entry.detail}`;
       select.appendChild(option);
     }
     select.onchange = () => select.value && openWorld(select.value);
@@ -1022,7 +1022,7 @@ async function openWorld(url) {
     const world = await response.json();
     loadRun(
       {
-        mission_text: `${world.name} — nothing has flown yet`,
+        mission_text: `${world.name}: nothing has flown yet`,
         world,
         waypoints: [],
         ticks: [],

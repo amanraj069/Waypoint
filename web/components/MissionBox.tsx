@@ -4,7 +4,7 @@
  * Where you tell the aircraft what to do.
  *
  * This is the front door of the whole project: a sentence in, a flight out. The
- * controls beside it are the things that change what the sentence means — which
+ * controls beside it are the things that change what the sentence means: which
  * place it is flown in, what the air is doing, and how many corrections the
  * verifier may demand before the mission is abandoned.
  */
@@ -140,7 +140,7 @@ export function MissionBox({
         {landmarks.length > 0 && (
           <div className="mt-2">
             <div className="mb-1 text-[10px] uppercase tracking-wide text-faint">
-              named places here — click to put one in the mission
+              named places here; click to put one in the mission
             </div>
             <div className="flex flex-wrap gap-1">
               {landmarks.map((name) => (

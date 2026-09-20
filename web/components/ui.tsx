@@ -64,7 +64,7 @@ export function useFolded(key: string, defaultOpen = true) {
 /**
  * A titled box you can fold away.
  *
- * Every panel folds — a mission you are watching does not need the world list,
+ * Every panel folds: a mission you are watching does not need the world list,
  * and a place you are studying does not need the log. What you fold stays
  * folded: the state is keyed on the title and kept in localStorage, so the
  * layout you arrive at is the layout you left.

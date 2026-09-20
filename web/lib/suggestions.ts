@@ -2,7 +2,7 @@
  * Something to type, when the box is empty and the place is new.
  *
  * These are written per world because a good first mission names things that
- * are actually there — the point of the whole exercise is that "photograph
+ * are actually there; the point of the whole exercise is that "photograph
  * Bara Gumbad from two sides" lands on a building with a position and a height,
  * and a generic "survey the area" teaches you nothing about that.
  */
@@ -35,7 +35,7 @@ export const SUGGESTIONS: Record<string, string[]> = {
 };
 
 /**
- * A fallback for worlds nobody wrote suggestions for — an OSM import, say.
+ * A fallback for worlds nobody wrote suggestions for, an OSM import, say.
  * Landmark names are the only thing that is certainly true about a place.
  */
 export function suggestionsFor(worldId: string | null, landmarks: string[]): string[] {

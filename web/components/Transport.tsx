@@ -3,7 +3,7 @@
 /**
  * Play, scrub, and the marks on the track.
  *
- * The marks are the flight's events — a waypoint reached, a fault firing — so
+ * The marks are the flight's events (a waypoint reached, a fault firing), so
  * the timeline shows where the interesting seconds are before you go looking
  * for them.
  */

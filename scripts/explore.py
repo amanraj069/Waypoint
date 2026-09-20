@@ -110,7 +110,7 @@ def preview_file(world: World, constraints: MissionConstraints) -> str:
     """A run file with a world and no flight: somewhere to look around."""
     payload = {
         "schema_version": 2,
-        "mission_text": f"{world.name} — nothing has flown yet",
+        "mission_text": f"{world.name}: nothing has flown yet",
         "constraints": constraints.model_dump(mode="json"),
         "world": world.model_dump(mode="json"),
         "waypoints": [],
@@ -206,7 +206,7 @@ def fly(mission: str, live: Live, session: Session, runs_dir: Path) -> Path | No
 
     report.run_file = write_run(report, runs_dir=runs_dir)
     write_index(flyable_runs())
-    session.write(f"{outcome} — {report.duration:.0f}s", run=f"/runs/{report.run_file.name}")
+    session.write(f"{outcome}, {report.duration:.0f}s", run=f"/runs/{report.run_file.name}")
     print(f"  {report.run_file}\n  ...loading in the browser")
     return report.run_file
 

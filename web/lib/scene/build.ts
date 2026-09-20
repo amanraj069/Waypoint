@@ -5,12 +5,15 @@
  * a `THREE.Group`. React mounts the result and drives it, which keeps the part
  * that has to be fast out of the render tree.
  *
- * Frames: the simulator works in ENU — x east, y north, z up — and three.js
+ * Frames: the simulator works in ENU (x east, y north, z up) and three.js
  * has y up with z toward the viewer, so every position goes through `toScene`.
  */
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { Line2 } from "three/examples/jsm/lines/Line2.js";
+import { LineGeometry } from "three/examples/jsm/lines/LineGeometry.js";
+import { LineMaterial } from "three/examples/jsm/lines/LineMaterial.js";
 import type {
   Building,
   Constraints,
@@ -53,7 +56,7 @@ let building_light = false;
 
 export const toScene = (x: number, y: number, z: number) => new THREE.Vector3(x, z, -y);
 
-/** Bilinear sample of the height grid — the same one the Python side uses, so
+/** Bilinear sample of the height grid, the same one the Python side uses, so
  *  a label sits on the ground the verifier checked rather than above it. */
 export function elevationAt(terrain: Terrain | null | undefined, x: number, y: number): number {
   if (!terrain) return 0;
@@ -127,7 +130,7 @@ function findTerrain(root: THREE.Object3D): THREE.Mesh | null {
 /**
  * The ground across a pad-sized patch, for live feedback while dragging.
  *
- * `world/landing.py` is the authority — it decides what is usable and its
+ * `world/landing.py` is the authority: it decides what is usable and its
  * answer is what the flight uses. This is the same measurement done locally so
  * the pad can turn red under your pointer instead of after a round trip.
  */
@@ -183,7 +186,9 @@ function mergedBuildings(buildings: Building[]): THREE.Object3D[] {
       const geometry = buildingGeometry(building);
       paintBuilding(geometry, building, finish);
       solids.push(geometry);
-      outlines.push(new THREE.EdgesGeometry(geometry, 25));
+      // Outlines matter on the named buildings; on hundreds of small houses
+      // they cost more to build than they add.
+      if (kind !== "house") outlines.push(new THREE.EdgesGeometry(geometry, 25));
     }
     const surface = surfaceFor(kind, building_light);
     const walls = mergeGeometries(solids, false);
@@ -202,7 +207,7 @@ function mergedBuildings(buildings: Building[]): THREE.Object3D[] {
       mesh.receiveShadow = true;
       objects.push(mesh);
     }
-    const edges = mergeGeometries(outlines, false);
+    const edges = outlines.length ? mergeGeometries(outlines, false) : null;
     for (const geometry of outlines) geometry.dispose();
     if (edges) {
       objects.push(
@@ -211,7 +216,7 @@ function mergedBuildings(buildings: Building[]): THREE.Object3D[] {
           new THREE.LineBasicMaterial({
             color: surface.edge,
             transparent: true,
-            opacity: kind === "house" ? 0.22 : 0.38,
+            opacity: 0.38,
           }),
         ),
       );
@@ -346,7 +351,7 @@ function mergedTrees(trees: Building[]): THREE.Object3D[] {
 
 function buildingGeometry(building: Building): THREE.BufferGeometry {
   // The footprint goes in as (x, y) in ENU. Extrude builds it in the XY plane
-  // and rotateX(-90) maps (x, y, h) -> (x, h, -y), which is exactly toScene —
+  // and rotateX(-90) maps (x, y, h) -> (x, h, -y), which is exactly toScene;
   // so do NOT flip y here, or the building lands on the mirror image of its own
   // plot and floats above whatever ground is on the other side.
   const shape = new THREE.Shape(building.footprint.map((p) => new THREE.Vector2(p.x, p.y)));
@@ -510,21 +515,51 @@ function polygonOutline(
   return group;
 }
 
+/**
+ * A line that is as wide as asked. WebGL draws every THREE.Line 1px wide
+ * whatever its linewidth says, which is too thin to follow over a busy town.
+ * Width is in CSS pixels, so it reads the same at any zoom.
+ */
+function thickLine(points: THREE.Vector3[], material: LineMaterial): Line2 {
+  // LineGeometry needs at least one segment.
+  if (points.length === 1) points = [points[0], points[0]];
+  const geometry = new LineGeometry();
+  geometry.setPositions(points.flatMap((p) => p.toArray()));
+  const line = new Line2(geometry, material);
+  const size = new THREE.Vector2();
+  line.onBeforeRender = (renderer) => {
+    // The photo camera renders into its own target; size to whatever is drawn into.
+    const target = renderer.getRenderTarget();
+    if (target) material.resolution.set(target.width, target.height);
+    else material.resolution.copy(renderer.getSize(size));
+  };
+  return line;
+}
+
+/** Draw the flown path up to and including tick `index`. */
+export function showFlownTo(flown: Line2, index: number): void {
+  flown.geometry.instanceCount = Math.max(0, index);
+}
+
+/** How far the flown path is drawn now, as a tick index for showFlownTo. */
+export function flownShown(flown: Line2): number {
+  return flown.geometry.instanceCount;
+}
+
 function plannedRoute(waypoints: PlannedWaypoint[]): THREE.Group {
   const group = new THREE.Group();
   if (!waypoints.length) return group;
 
-  const line = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints([
-      toScene(0, 0, 0),
-      ...waypoints.map((w) => toScene(w.x, w.y, w.z)),
-    ]),
-    new THREE.LineDashedMaterial({
+  const line = thickLine(
+    [toScene(0, 0, 0), ...waypoints.map((w) => toScene(w.x, w.y, w.z))],
+    new LineMaterial({
       color: COLORS.planned,
+      linewidth: 2.5,
+      dashed: true,
       dashSize: 3,
       gapSize: 2,
       transparent: true,
-      opacity: 0.8,
+      opacity: 0.85,
     }),
   );
   line.computeLineDistances();
@@ -651,7 +686,7 @@ export function buildPad(color: number = COLORS.pad, label?: string): THREE.Grou
 }
 
 /**
- * Recolour a pad in place — used to warn while it is being dragged.
+ * Recolour a pad in place, used to warn while it is being dragged.
  *
  * Only the solid parts: tinting the name plate would tint its texture, and the
  * invisible grab cylinder has nothing to show.
@@ -674,7 +709,7 @@ export interface BuiltScene {
   /** The obstacles that appear mid-flight, so playback can reveal them on cue. */
   obstacles: THREE.Mesh[];
   /** The flown path, drawn only as far as the playhead. */
-  flown: THREE.Line | null;
+  flown: Line2 | null;
   /** Half-width of everything, including the fence: sets the fog and the far plane. */
   extent: number;
   /** The middle of what there is to look at, in scene coordinates. */
@@ -749,19 +784,13 @@ export function buildScene(run: Run, theme: "light" | "dark" = isLight() ? "ligh
   // The flown path is drawn up to the playhead, so it draws itself as it flies.
   // A world preview has no path yet.
   const ticks = run.ticks ?? [];
-  let flown: THREE.Line | null = null;
+  let flown: Line2 | null = null;
   if (ticks.length) {
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(ticks.length * 3);
-    ticks.forEach((tick, i) => {
-      const v = toScene(tick.x, tick.y, tick.z);
-      positions[i * 3] = v.x;
-      positions[i * 3 + 1] = v.y;
-      positions[i * 3 + 2] = v.z;
-    });
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    flown = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: COLORS.flown }));
-    flown.geometry.setDrawRange(0, 1);
+    flown = thickLine(
+      ticks.map((tick) => toScene(tick.x, tick.y, tick.z)),
+      new LineMaterial({ color: COLORS.trail, linewidth: 10 }),
+    );
+    showFlownTo(flown, 0);
     group.add(flown);
   }
 

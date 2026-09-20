@@ -3,7 +3,7 @@
 /**
  * Light or dark, remembered.
  *
- * The choice is written to the document as `data-theme` — CSS variables do the
+ * The choice is written to the document as `data-theme`; CSS variables do the
  * rest, and the 3D view reads the same variables, so the scene can never be
  * dark while its chrome is light. Nothing here renders; a small script in the
  * layout applies the stored choice before the first paint, so there is no flash

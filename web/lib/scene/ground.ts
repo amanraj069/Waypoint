@@ -1,7 +1,7 @@
 /**
  * The ground: what it is, painted onto it.
  *
- * A world's ground cover — lawns, roads, water, tea — is flat and never in the
+ * A world's ground cover (lawns, roads, water, tea) is flat and never in the
  * way, so rather than hundreds of overlapping meshes fighting over the same
  * depth it is painted into one texture and draped over the terrain. Relief
  * colours come first (valley green up to summit grass, rock where it is
@@ -169,20 +169,22 @@ export function paintGround(world: World, frame: Frame, light: boolean): THREE.C
 
   // Contact shadows: a soft dark bloom under every footprint, so a building
   // sits on the ground rather than hovering over it when the sun is overhead.
+  // One path, one blurred fill: blurring each footprint on its own costs a
+  // filter pass per building, which is seconds on a city.
   ctx.save();
   ctx.fillStyle = palette.shadow;
   ctx.filter = `blur(${Math.max(1.5, 2.5 * scale)}px)`;
+  ctx.beginPath();
   for (const building of world.buildings ?? []) {
-    if (building.kind === "tree") continue;
-    trace(grow(building.footprint, 1.5));
-    ctx.fill();
+    const points = building.kind === "tree" ? building.footprint : grow(building.footprint, 1.5);
+    points.forEach((p, i) => {
+      const [x, y] = toPx(p);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
   }
-  ctx.globalAlpha = 0.6;
-  for (const building of world.buildings ?? []) {
-    if (building.kind !== "tree") continue;
-    trace(building.footprint);
-    ctx.fill();
-  }
+  ctx.fill("nonzero");
   ctx.restore();
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -216,7 +218,7 @@ function paintArea(
   let fill = palette.kinds[kind];
   // Water on a hillside is drawn by its own surface; what is painted under
   // it is the shore, so a bank that rises through the water reads as land.
-  if (kind === "water" && onTerrain && area.level != null) fill = palette.kinds.sand;
+  if (kind === "water" && onTerrain && area.level != null) fill = palette.kinds.lawn;
   trace(area.footprint);
   ctx.fillStyle = fill;
   ctx.fill();
@@ -314,9 +316,13 @@ export function groundSlab(frame: Frame, texture: THREE.Texture, light: boolean)
   top.position.set(frame.minX + width / 2, 0, -(frame.minY + depth / 2));
   top.receiveShadow = true;
   const thickness = Math.max(3, Math.max(width, depth) * 0.006);
+  // The body's top face is left undrawn: two coplanar surfaces a hair apart
+  // z-fight into stripes at a distance, and the textured top covers it anyway.
+  const sides = new THREE.MeshStandardMaterial({ color: palette.skirt, roughness: 1 });
+  const hidden = new THREE.MeshBasicMaterial({ visible: false });
   const body = new THREE.Mesh(
     new THREE.BoxGeometry(width, thickness, depth),
-    new THREE.MeshStandardMaterial({ color: palette.skirt, roughness: 1 }),
+    [sides, sides, hidden, sides, sides, sides],
   );
   body.position.set(frame.minX + width / 2, -thickness / 2 - 0.02, -(frame.minY + depth / 2));
   group.add(top, body);

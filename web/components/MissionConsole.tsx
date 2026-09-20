@@ -6,7 +6,7 @@
  * The four boxes here are the four stages of the project made visible: the
  * planner's decomposition, the verifier's verdict on it, the telemetry coming
  * off the simulator, and the log everything writes to. A rejected plan and the
- * correction that follows it show up in the same place, which is the point —
+ * correction that follows it show up in the same place, which is the point:
  * the safety gate is not a detail hidden behind a spinner.
  */
 
@@ -189,7 +189,7 @@ export function MissionConsole({
         {!verification ? (
           <Empty>no verdict yet</Empty>
         ) : verification.violations.length === 0 ? (
-          <p className="text-good">no violations — the plan is inside the envelope</p>
+          <p className="text-good">no violations: the plan is inside the envelope</p>
         ) : (
           <ul className="space-y-1">
             {[...blocking, ...warnings].map((violation, index) => (
@@ -212,7 +212,7 @@ export function MissionConsole({
             {telemetry.agl !== undefined && <Row label="agl">{telemetry.agl.toFixed(0)} m</Row>}
             <Row label="speed">{telemetry.speed?.toFixed(1)} m/s</Row>
             <Row label="waypoint">
-              {telemetry.waypoint ?? "—"} / {telemetry.of}
+              {telemetry.waypoint ?? "-"} / {telemetry.of}
             </Row>
             <Row label="batt">{telemetry.battery?.toFixed(0)} %</Row>
           </div>

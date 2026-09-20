@@ -4,7 +4,7 @@
  * Starting a mission and watching it happen.
  *
  * The server streams one line at a time; this folds those lines into the shape
- * the page draws — which stage we are in, what the planner came back with, what
+ * the page draws: which stage we are in, what the planner came back with, what
  * the verifier said about it, and where the aircraft is now.
  */
 

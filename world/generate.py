@@ -786,10 +786,10 @@ def hills(name: str = "munnar", **kwargs) -> World:
 #: Everything a caller can ask for by name -- the CLI, the API and the picker
 #: all resolve through this, so there is one list of built-in worlds.
 BUILDERS: dict[str, tuple[str, str]] = {
-    "delhi": ("lutyens_delhi", "The Central Vista, New Delhi — India Gate to Rashtrapati Bhavan"),
-    "lodhi": ("lodhi_garden", "Lodhi Garden, New Delhi — tombs, groves and a lake"),
-    "chowk": ("chandni_chowk", "Chandni Chowk, Old Delhi — a 30 m street between solid shopfronts"),
-    "munnar": ("munnar", "The Kannan Devan hills, Kerala — tea estates under Anamudi"),
+    "delhi": ("lutyens_delhi", "The Central Vista, New Delhi: India Gate to Rashtrapati Bhavan"),
+    "lodhi": ("lodhi_garden", "Lodhi Garden, New Delhi: tombs, groves and a lake"),
+    "chowk": ("chandni_chowk", "Chandni Chowk, Old Delhi: a 30 m street between solid shopfronts"),
+    "munnar": ("munnar", "The Kannan Devan hills, Kerala: tea estates under Anamudi"),
     # The names the project used before these places had names.
     "city": ("lutyens_delhi", "alias for delhi"),
     "park": ("lodhi_garden", "alias for lodhi"),

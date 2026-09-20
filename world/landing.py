@@ -66,7 +66,7 @@ class Site(BaseModel):
             return f"{where}: {self.why_not()}"
         ground = f"ground at {self.elevation:.1f} m, {self.slope_deg:.0f}° slope"
         if self.moved:
-            return f"{where}: {ground} — moved {self.moved:.0f} m to find it"
+            return f"{where}: {ground}, moved {self.moved:.0f} m to find it"
         return f"{where}: {ground}"
 
 

@@ -4,7 +4,7 @@
  * Playback runs at frame rate and React does not, so the transport state lives
  * in a plain object the 3D view mutates directly. Components subscribe to two
  * different things: *control* changes (play, rate, seek, follow) which are rare
- * and re-render immediately, and *samples* — where the aircraft is right now —
+ * and re-render immediately, and *samples* (where the aircraft is right now)
  * which arrive many times a second and are throttled before they reach state.
  */
 

@@ -76,7 +76,7 @@ def write_index(runs: list[Path]) -> None:
             continue
         when = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
         duration = run.get("sim", {}).get("duration_s")
-        suffix = f" — {duration:.0f}s" if isinstance(duration, (int, float)) else ""
+        suffix = f", {duration:.0f}s" if isinstance(duration, (int, float)) else ""
         entries.append(
             {
                 "url": f"/runs/{path.name}",

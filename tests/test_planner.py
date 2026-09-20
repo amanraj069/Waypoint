@@ -371,8 +371,17 @@ def test_a_genuine_bug_is_not_swallowed(constraints):
 # --- credentials ------------------------------------------------------------
 
 
+def _clear_api_keys(monkeypatch):
+    """Drop the plain key and every numbered one a real .env may have loaded."""
+    import os
+
+    for name in list(os.environ):
+        if name.startswith(API_KEY_VAR):
+            monkeypatch.delenv(name)
+
+
 def test_get_client_requires_the_env_var(monkeypatch):
-    monkeypatch.delenv(API_KEY_VAR, raising=False)
+    _clear_api_keys(monkeypatch)
 
     with pytest.raises(PlannerResponseError, match=API_KEY_VAR):
         get_client()
@@ -380,6 +389,7 @@ def test_get_client_requires_the_env_var(monkeypatch):
 
 def test_a_blank_key_counts_as_unset(monkeypatch):
     """The placeholder line in a freshly copied .env must fail clearly, not 401."""
+    _clear_api_keys(monkeypatch)
     monkeypatch.setenv(API_KEY_VAR, "   ")
 
     with pytest.raises(PlannerResponseError, match=API_KEY_VAR):

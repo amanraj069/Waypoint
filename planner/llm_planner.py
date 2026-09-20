@@ -13,6 +13,7 @@ from typing import Any
 
 from google import genai
 from google.genai import errors as genai_errors
+from google.genai import types as genai_types
 from pydantic import ValidationError
 
 from typing import TYPE_CHECKING
@@ -80,23 +81,36 @@ def _should_shift(exc: BaseException) -> bool:
         return type(exc).__name__ in {"APIConnectionError", "APITimeoutError", "NoResponseError"}
     return status in _SHIFTABLE_STATUSES
 
+# The SDK retries 429s and 5xxs by itself with backoff, for minutes, and never
+# raises -- so a spent quota looked like a mission stuck in planning forever.
+# Fail fast instead: the model ladder above is the retry policy, and a failure
+# the page can show beats a spinner.
+HTTP_OPTIONS = genai_types.HttpOptions(retry_options=genai_types.HttpRetryOptions(attempts=0))
+
+#: Seconds to wait for one plan. client.interactions ignores HttpOptions.timeout,
+#: so this is passed on every call.
+REQUEST_TIMEOUT_S = 120.0
+
 _client: genai.Client | None = None
 
 
 def get_client() -> genai.Client:
     """Return a process-wide Gemini client.
 
-    The key comes from GEMINI_API_KEY (via the environment or .env) and is read
-    by the SDK itself; it is never passed in or stored here.
+    The key comes from GEMINI_API_KEY1, GEMINI_API_KEY2, ... (or a plain
+    GEMINI_API_KEY) via planner.config, and is handed to the SDK explicitly: the
+    SDK on its own only looks at GEMINI_API_KEY / GOOGLE_API_KEY, so numbered
+    keys would otherwise be invisible to it.
     """
     global _client
     if _client is None:
-        if get_api_key() is None:
+        api_key = get_api_key()
+        if api_key is None:
             raise PlannerResponseError(
                 f"{API_KEY_VAR} is not set. Put your Gemini API key in .env "
                 f"(see .env.example) or export {API_KEY_VAR} before planning."
             )
-        _client = genai.Client()
+        _client = genai.Client(api_key=api_key, http_options=HTTP_OPTIONS)
     return _client
 
 
@@ -161,6 +175,7 @@ def _request_plan(
                 system_instruction=SYSTEM_PROMPT,
                 input=user_prompt,
                 response_format=RESPONSE_FORMAT,
+                timeout=REQUEST_TIMEOUT_S,
             )
         except API_ERRORS as exc:
             attempts.append(f"{model}: {type(exc).__name__}: {exc}")
