@@ -16,15 +16,17 @@ natural language mission
         -> replan loop back into planner           [wired: a rejected plan goes back with the reasons]
 ```
 
-There are two ways in. **The studio** is a web application: pick a place, look
-around it in 3D, type what you want, and watch each stage happen:
+There are two ways in. **The prompt** opens a place, takes a mission in plain
+English, and flies it:
 
 ```bash
-.venv/bin/python scripts/studio.py
+.venv/bin/python scripts/explore.py --world lodhi
 ```
 
-**The CLI** does the same thing at a prompt, and every stage is also importable
-on its own. Both drive the same pipeline; neither is a wrapper around the other.
+**The CLI** does each stage on its own, and every stage is also importable.
+Both drive the same pipeline; neither is a wrapper around the other. You watch
+the result in **Gazebo**, which is the only 3D view: every run becomes an SDF
+world and the flight is replayed in it.
 
 ## Layout
 
@@ -41,8 +43,6 @@ on its own. Both drive the same pipeline; neither is a wrapper around the other.
 | `worlds/`       | saved environments built by `scripts/make_world.py` |
 | `experiments/`  | scratch scenarios and logged runs |
 | `api/`          | FastAPI over the pipeline: worlds, missions (streamed as they happen), runs |
-| `web/`          | The studio: Next.js + react-three-fiber, the 3D view and the mission box |
-| `viewer/`       | `index.html`: the original single-file three.js replay, no build step |
 | `gazebo/`       | Gazebo as the 3D view: a run becomes an SDF world, and the flight is replayed in it |
 
 ## Configuration
@@ -63,18 +63,23 @@ fails with a clear message rather than a 401.
 ```bash
 git clone https://github.com/amanraj069/Waypoint.git && cd Waypoint
 uv venv --python 3.11                   # or: python3.11 -m venv .venv
-uv pip install -e ".[dev,web]"          # or: .venv/bin/pip install -e ".[dev,web]"
+uv pip install -e ".[dev,api]"          # or: .venv/bin/pip install -e ".[dev,api]"
 ```
 
-That is everything the simulator, the API and the old viewer need. The studio
-also needs Node 20 or newer, once:
+That is everything the planner, the verifier and the simulator need. To *watch*
+a flight you also want Gazebo (gz-sim, Harmonic or newer):
 
 ```bash
-cd web && npm install && cd ..
+brew install gz-jetty                   # macOS; any gz-sim >= Harmonic works
+/opt/homebrew/bin/python3.14 -m venv --system-site-packages .venv-gz
+.venv-gz/bin/python -m pip install protobuf
 ```
 
-If you only want the CLI, `".[dev]"` is enough; `web` is just FastAPI and
-uvicorn, and nothing outside `api/` imports them. A Gemini key is only
+Gazebo's Python bindings are built for Homebrew's Python rather than the
+project's, so the one process that talks to Gazebo runs in that small side
+environment; everything else runs in `.venv`. If you only want the CLI,
+`".[dev]"` is enough; `api` is just FastAPI and uvicorn, and nothing outside
+`api/` imports them. A Gemini key is only
 required to *plan* a new mission; flying and replaying work without one:
 
 ```bash
@@ -102,109 +107,50 @@ not have the dependencies.
 
 ## Run
 
-### 0. The studio
+### 0. Watch a flight in Gazebo (no API key, ~10 seconds)
 
-One command starts the API, the web app, and a browser on it:
+One command flies a bundled plan through the simulator and opens Gazebo on it:
 
 ```bash
-.venv/bin/python scripts/studio.py
+python scripts/simulate.py --plan examples/plans/munnar_ridge_run.json \
+    --world munnar --gazebo
 ```
 
-```
-api   http://127.0.0.1:8000
-      5 worlds, 19 runs, planner gemini-3.6-flash
-web   http://localhost:3000
+Every run file becomes a Gazebo world: the terrain as a mesh coloured by ground
+cover, each building as a named model, the trees, the geofence and no-fly zones
+as glass, the planned route as beads coloured by action, and the launch and
+landing pads. The aircraft is then flown through it from the run's ticks, with
+a chase camera and a magenta trail; obstacles that appear mid-flight are
+spawned when the flight reaches them. The terminal prints the flight log as it
+plays, and the window stays open when the flight ends, so you can look around.
 
-ready. Ctrl-C to stop both.
-```
+```bash
+# replay the newest run, or any run file, at any speed
+python scripts/gazebo_view.py --latest --speed 2
+python scripts/gazebo_view.py runs/<mission>_<stamp>.json
 
-The page has two columns. On the left, one sidebar holding everything *about*
-the mission: **where** (the places below, plus anything you have imported),
-**this place**, and the pipeline as it runs: **pipeline**, **plan**,
-**verifier** with each violation spelled out, and the **log**. On the right, the
-place itself, the transport bar, and **the mission box**, where you type the
-instruction; every named place in the world is a chip under the box, so you can
-click "Bara Gumbad" rather than guess what it is called.
+# a place on its own, nothing flying
+python scripts/gazebo_view.py --world munnar
 
-Every panel folds, and so does the whole sidebar: `⟨⟨` collapses it to a rail
-and gives the 3D view the full width, `⟩⟩` brings it back. All of it is
-remembered, so the layout you arrive at is the layout you left.
-
-**Folding things away.** Every panel folds; click its title. A mission you are
-watching does not need the world list, and a place you are studying does not
-need the log. What you fold stays folded: the state is kept per panel in
-`localStorage`, so the layout you arrive at is the layout you left.
-
-**Light or dark.** The switch is in the top bar, and it remembers. With no
-choice stored it follows your system. Both palettes are defined once as CSS
-variables in `web/app/globals.css`, and the 3D view reads the *same* variables,
-so the scene can never be dark while its chrome is light: the ground, the
-buildings and the name plates all change with the page. A small script in the
-layout applies your stored choice before the first paint, so there is no flash
-of the wrong palette on the way in.
-
-**Choosing where it takes off.** Both pads are on screen from the moment a
-world loads: a green one for the start, an amber one for the landing, each a
-lit disc with a beam and a name plate so you can find them from across a city.
-Until you move the landing pad it sits on the launch pad, which is what "comes
-home" looks like.
-
-**Drag them.** Grab either pad and pull it across the ground. It follows the
-terrain as it goes, re-reading the ground height under it on every frame, and
-turns red the moment it is over something it could not stand on. Let go and the
-server surveys the spot properly and has the last word. If you would rather
-aim than drag, **start** and **landing** in the toolbar turn the pointer into a
-crosshair for one click; ✕ puts either back to its default.
-
-That one point is shared by all three stages, which is the only way it can mean
-anything: the planner is told the aircraft is standing there and writes a plan
-that climbs from it and lands back on it, the verifier measures the first leg
-from it, and the simulator starts the aircraft on it. The altitude comes from
-the ground under the spot you picked, so a pad on a hillside is at the height of
-that hillside; you never have to work it out.
-
-**And where it puts down.** **set landing** does the same for the other end, in
-amber so the two pads are never confused. Leave it alone and the aircraft comes
-home; set it and the plan ends somewhere else.
-
-A landing point gets more scrutiny than a launch point, because a patch of
-ground that is perfectly clear can still be useless: ground that falls away
-under the skids is how a multirotor tips over on touchdown. So the spot is
-*surveyed* rather than assumed: the ground is sampled across the aircraft's
-own 6 m footprint, and a site is only usable if it slopes no more than 8° and
-rises or falls no more than 0.9 m across that footprint.
-
-Click somewhere that will not do and the pad does not go there. It moves to the
-nearest ground that will, within 120 m, and says what happened:
-
-```
-moved the landing 112 m to level ground: the ground falls 3.4 m
-across the 6 m pad (30°), too uneven to set down on
+# no window at all: the flight log only
+python scripts/gazebo_view.py --latest --headless
 ```
 
-If nothing within 120 m would do (a 45° face in Munnar, say), it refuses
-outright rather than putting you somewhere surprising. The survey lives in
-`world/landing.py` and runs on the server, so the pad you are looking at cannot
-disagree with the flight you get; the browser asks
-`/api/worlds/{id}/site?x=&y=` on every click rather than guessing for itself.
+The launcher starts the gz server and the GUI as separate processes (on macOS
+they cannot share one) plus `gazebo/bridge.py`, which is the only code that
+speaks gz-transport. The scene is written to
+`~/.cache/waypoint/gazebo/<mission>/`, because SDF mesh URIs do not survive the
+spaces in a path like `VS Code/`.
 
-Two things it will refuse. Starting inside a building (it moves you off it), and
-moving either pad under a *bundled* plan, whose waypoints are absolute and whose
-last one lands where it was written; for that, write the mission in English
-instead.
+The physics you watch is still ours: Gazebo runs with gravity off, and the
+aircraft is posed from the simulator's ticks, so the flight in the window is
+exactly the flight the verifier passed and the run file recorded. Putting PX4
+SITL underneath instead (Gazebo as PX4's physics, MAVSDK uploading the plan)
+would be a new `sim` backend; the world export here is the half of that already
+done.
 
-When the flight is written the middle column loads it and plays it. `/runs` is
-every flight this machine has made; opening one gives the full replay, with the
-onboard photographs rendered from the aircraft's own pose at each `CAPTURE`.
-
-**Without a Gemini key the box is disabled and the bundled plans are not**: each
-world ships with a verified plan you can fly, which exercises the verifier, the
-simulator, the fault injection and the replay without spending a token.
-
-Flags: `--api-port`, `--web-port`, `--no-open`, `--api-only`, `--reload`.
-
-The API is a plain HTTP service if you would rather drive it yourself
-(`http://127.0.0.1:8000/api/docs` documents itself):
+The API is a plain HTTP service if you would rather drive the pipeline yourself
+(`uvicorn api.main:app`, then `http://127.0.0.1:8000/api/docs` documents itself):
 
 | Route | |
 | --- | --- |
@@ -222,10 +168,9 @@ curl -N localhost:8000/api/missions/m1-49e180/events
 
 ### 1. Look around, then just say what you want, at a prompt
 
-The quickest way in. It opens the world in your browser with nothing flying in
-it, so you can orbit around and see what you are dealing with, then you type
-missions at a prompt and watch each one appear in the page you are already
-looking at.
+The quickest way in. It tells you what is in the place and what you can name,
+then you type missions at a prompt and each one opens in Gazebo when it is
+flown. Close the window and you are back at the prompt, ready for the next one.
 
 ```bash
 .venv/bin/python scripts/explore.py --world lodhi          # named places to point at
@@ -251,9 +196,8 @@ It flanked the 22 m tomb to get two angles, ran the avenue at 25 m (over the
 16 m ashokas, not between them) and dropped to 8 m for the water.
 
 ```
-central vista (procedural): 66 obstacles (44 trees), tallest roof 80 m, ground -0..26 m
-viewer: http://localhost:8765/viewer/index.html?session=1
-have a look around, then tell it what to do. /help for commands.
+central vista (procedural): 380 obstacles (240 trees), tallest roof 80 m, ground -0..26 m
+tell it what to do, and it flies in Gazebo. /help for commands.
 
 mission> climb over the Secretariat and photograph Rashtrapati Bhavan from the east, then come home
 
@@ -264,12 +208,14 @@ planning...
   verification passed
 
 flying...
-  ...loading in the browser
+  runs/climb-over-the-secretariat_20260920T101500.json
+  opening Gazebo on climb-over-the-secretariat_20260920T101500.json
 ```
 
-The browser follows along by itself: it shows the world first, says *planning*,
-then *flying*, then loads the finished run and plays it. Type another mission
-and it does the whole thing again.
+Gazebo opens on the finished flight and plays it. Close the window and type
+another mission, and it does the whole thing again. `--no-watch` writes the run
+without opening anything; `--speed` sets the playback rate; `/look` opens the
+world on its own, with nothing flying in it.
 
 Note the altitude the planner chose: 95 m, to clear a 42 m building standing
 on ground that has itself climbed 24 m up Raisina Hill. It reads the terrain
@@ -280,68 +226,42 @@ to the planner and asks for a correction (`--retries`, 2 by default) before
 giving up. That is the replan loop closing: the model proposes, the deterministic
 checker disposes, and the reasons are specific enough to fix.
 
-**Switching worlds from the page.** The control bar has a world picker
-alongside the run picker. It lists everything in `worlds/` (the four built-in
-ones are written there the first time you serve), and choosing one shows it
-immediately. If a session is running, the page also tells it to switch, so your
-*next mission flies in the world you just picked*. It works the other way too:
-`/world` at the prompt reloads the page.
-
 | At the prompt | |
 | --- | --- |
 | *anything else* | a mission, in plain English |
+| `/look` | open Gazebo on the world, with nothing flying in it |
 | `/world <spec>` | switch worlds: `delhi`, `lodhi`, `chowk`, `munnar`, or a `worlds/*.json` |
-| `/worlds` | list what the picker offers |
+| `/worlds` | list the worlds you can switch to |
 | `/wind x,y,z` | set the steady wind in m/s |
 | `/faults <spec>` | `sample`, `none`, or a schedule JSON |
 | `/retries <n>` | corrections to ask for after a rejection |
 | `/again` | re-fly the last mission |
 | `/help` `/quit` | |
 
-### 2. Watch the 3D demo (no API key, ~10 seconds)
-
-One command flies a bundled plan through the simulator with a bundled fault
-schedule, writes a run file, and opens the three.js viewer on it:
-
-```bash
-python scripts/simulate.py \
-    --plan examples/plans/north_field_and_tower.json \
-    --faults examples/faults/storm.json \
-    --serve
-```
-
-Your browser opens on `http://localhost:8765/viewer/index.html?run=/runs/<file>`
-and the flight animates immediately: the aircraft climbs, flies the survey
-pattern, gets shoved sideways by a squall, watches a crane appear beneath it,
-drifts off course when its GPS slips, and lands. The terminal prints the flight
-log alongside. Press **Ctrl-C** in the terminal when you are done; that stops
-the server.
-
-Without `--serve` the run is still written and the command prints the exact
-line to replay it later.
-
-### 3. Replay a past run
+### 2. Replay a past run
 
 Run files are self-contained, so nothing is re-simulated:
 
 ```bash
-python scripts/serve_viewer.py                       # the newest run
-python scripts/serve_viewer.py runs/my-run.json      # a specific one
-python scripts/serve_viewer.py --port 9000 --no-open # different port, no browser
+python scripts/gazebo_view.py --latest              # the newest run
+python scripts/gazebo_view.py runs/my-run.json      # a specific one
+python scripts/gazebo_view.py --world lodhi         # a place, nothing flying
+python scripts/gazebo_view.py --latest --speed 4    # four times as fast
 ```
 
-Two pickers in the control bar: **run** replays any past flight, **world** opens
-any environment in `worlds/` on its own, with nothing flying in it, so you can
-look around before deciding what to ask for.
+**In the window:** drag to orbit, scroll to zoom, and the camera follows the
+aircraft unless you pass `--no-follow`. The entity tree lists every building by
+name, so you can find "Bara Gumbad" in the world you are looking at. The flight
+log prints in the terminal as the flight plays.
 
-The viewer's dropdown lists every run in `runs/`, so you can switch between
-flights without restarting the server. You can also drag any run `.json`
-straight onto the page.
+### 3. Fly without a window
 
-**In the viewer:** `Space` plays and pauses, `←`/`→` step a second at a time,
-the slider scrubs, the speed selector runs up to 8×, **Follow** locks the camera
-to the aircraft, and clicking any line in the flight log jumps to that moment.
-Drag to orbit, scroll to zoom.
+`--headless` runs the gz server and the flight without the GUI, which is how
+the replay is exercised in CI and on a machine with no display:
+
+```bash
+python scripts/gazebo_view.py --latest --headless
+```
 
 ### 4. Fly your own scenario
 
@@ -377,7 +297,7 @@ wherever it is, which is realistic but writes a very large run file.
 
 Hand it a sentence and watch the whole pipeline run: the planner decomposes the
 mission into named phases, the verifier checks them, the simulator flies them,
-and the viewer animates the result.
+and Gazebo animates the result.
 
 ```bash
 python scripts/simulate.py \
@@ -401,10 +321,9 @@ The terminal shows the decomposition before anything flies:
   7 subtask(s), 10 waypoint(s)
 ```
 
-…then the verifier's verdict, then the flight. In the viewer, the **Mission
-plan** panel lists those same phases down the left side and lights each one up
-as the aircraft flies it, so the model's decomposition and the flight are the
-same object seen two ways. Click a phase to jump to it.
+…then the verifier's verdict, then the flight. The same phases label the route
+in Gazebo: each waypoint is a bead coloured by its action, so the model's
+decomposition and the flight are the same object seen two ways.
 
 `--save` writes the generated plan to a file, so you can re-fly the same mission
 as often as you like (different wind, different faults) without spending
@@ -436,64 +355,15 @@ python scripts/try_verifier.py --plan examples/plans/north_field_and_tower.json 
     --shrink 0.3 --hazards                                      # verifier only, no tokens
 ```
 
-### 7. Watch it in Gazebo
-
-Gazebo (gz-sim, Harmonic or newer; Homebrew's `gz-jetty` works) can stand in for
-the browser views. Every run file becomes a Gazebo world: the terrain as a mesh
-coloured by ground cover, each building as a named model, the trees, the
-geofence and no-fly zones as glass, the planned route as beads coloured by
-action, and the launch and landing pads. The aircraft is then flown through it
-from the run's ticks, with a chase camera and a magenta trail, and obstacles
-that appear mid-flight are spawned when the flight reaches them.
-
-Gazebo's Python bindings are built for Homebrew's Python, not the project's, so
-the process that talks to Gazebo runs in a small side environment. Make it once:
-
-```bash
-/opt/homebrew/bin/python3.14 -m venv --system-site-packages .venv-gz
-.venv-gz/bin/python -m pip install protobuf
-```
-
-Then:
-
-```bash
-# fly a plan and watch it in Gazebo instead of the browser
-python scripts/simulate.py --plan examples/plans/lodhi_garden_tour.json --world lodhi --gazebo
-
-# replay the newest run, or any run file, at any speed
-python scripts/gazebo_view.py --latest --speed 2
-python scripts/gazebo_view.py runs/<mission>_<stamp>.json
-
-# a place on its own, nothing flying
-python scripts/gazebo_view.py --world munnar
-
-# plan with Gemini, then watch the flight
-python -m orchestrator.run --mission "survey the north field" --gazebo
-```
-
-The launcher starts the gz server and the GUI as separate processes (on macOS
-they cannot share one) plus `gazebo/bridge.py`. It prints the flight log as it
-plays, and when the flight is over it leaves the window open until you close it.
-The scene is written to `~/.cache/waypoint/gazebo/<mission>/`, because SDF mesh
-URIs do not survive the spaces in a path like `VS Code/`.
-
-The physics you watch is still ours: Gazebo runs with gravity off, and the
-aircraft is posed from the simulator's ticks, so the flight in the window is
-exactly the flight the verifier passed and the run file recorded. Putting PX4
-SITL underneath instead (Gazebo as PX4's physics, MAVSDK uploading the plan)
-would be a new `sim` backend; the world export here is the half of that already
-done.
-
 ### Troubleshooting
 
 | Symptom | Fix |
 | --- | --- |
 | `No run files with telemetry in runs/` | Fly one first: `python scripts/simulate.py --plan examples/plans/north_field_and_tower.json` |
-| `port 8765 is already in use` | It just moves to 8766 and tells you; the URL it prints is the one to open. To reclaim the port: `lsof -ti:8765 \| xargs kill` |
-| Viewer page loads but stays empty | three.js comes from a CDN, so the first load needs internet; check the browser console |
+| `` `gz` is not on PATH `` | Install Gazebo: `brew install gz-jetty` (or any gz-sim >= Harmonic) |
 | `zsh: command not found: python` | macOS has no bare `python`; use `.venv/bin/python`, or `source .venv/bin/activate` first |
 | `ModuleNotFoundError: shapely` (or `pydantic`) | You are on a system `python3`; use `.venv/bin/python` |
-| `no Python can import Gazebo's bindings` | Make `.venv-gz` as shown in [Watch it in Gazebo](#7-watch-it-in-gazebo), or point `WAYPOINT_GZ_PYTHON` at a Python that can `import gz.transport` |
+| `no Python can import Gazebo's bindings` | Make `.venv-gz` as shown in [Setup](#setup), or point `WAYPOINT_GZ_PYTHON` at a Python that can `import gz.transport` |
 | Gazebo window opens but the aircraft never moves | A previous run is still holding the world: `pkill -f gz-sim-main`, then try again |
 | Plan rejected before flying | That is the verifier doing its job; the report says which waypoint and why. `--force` flies it anyway |
 
@@ -659,8 +529,8 @@ becomes waypoints instead of a shrug:
     tallest thing anywhere near
 ```
 
-In the viewer each one is ringed on the ground and labelled in 3D, so you can
-read the name, then type it. Press `l` to hide the labels.
+In Gazebo each one is a named model, so the entity tree reads like the place
+does: find the name there, then type it.
 
 The garden's 61 trees are real obstacles: the ashoka rows will stop a drone at
 8 m, the ~17 m gap down the middle will not, and the old grove of neem, peepal
@@ -816,48 +686,42 @@ replayed exactly:
 python scripts/simulate.py --plan /tmp/plan.json --faults my_scenario.json
 ```
 
-## 3D views
+## The 3D view
 
-The view draws **on demand**: while a replay is playing it animates, and the
-moment it is paused (or while you are simply looking at a place), it stops
-drawing entirely and costs nothing. Orbiting, seeking, toggling labels and
-loading a world each ask for the frames they need. Nothing idles: the rotors
-only turn while the aircraft is flying, because a scene that is never still can
-never stop being drawn.
+Gazebo draws every run, and `gazebo/scene.py` is what turns a run file into
+something it can open. Two files come out, into
+`~/.cache/waypoint/gazebo/<mission>/`:
 
-Geometry is merged by kind, so a city is a handful of draw calls rather than one
-per building plus one per outline: the Gateway of India's 118 structures go
-from 238 meshes to 3. Photographs render into an offscreen target, so the canvas
-does not have to preserve its drawing buffer on every frame of every flight for
-the sake of the occasional shot.
+`world.sdf` holds everything that is not ground: each building as its own named
+model (so the entity tree reads like the place does), the trees, the geofence
+and no-fly zones as glass, the planned route as beads coloured by action, the
+launch and landing pads, and the aircraft. Nothing in it is a physics body
+except the aircraft, and the world has no gravity.
 
+`terrain.obj` is the ground, written as a mesh rather than an SDF heightmap
+because a heightmap cannot carry ground cover and wants a power-of-two image.
+The mesh is sampled on a 4 m grid (capped at 320 cells a side, so a city still
+loads in a second or two), each cell coloured by what covers it: tea terraces,
+lawn, water, road, forest. Normals come from the height field's own slope, so
+hills are lit like hills. Cells are written as quads, which Gazebo triangulates
+on load: the same mesh from half as many lines of OBJ.
 
-There are two, and they draw the same run file. The studio's is a React port in
-`web/components/Viewport.tsx`, built on react-three-fiber, with the scene
-construction kept framework-free in `web/lib/scene/`. The original is
-`viewer/index.html`, and it still works exactly as it did.
+`gazebo/bridge.py` is the only code that speaks gz-transport, and it runs under
+Homebrew's Python because that is what Gazebo's bindings are built for. The
+launcher feeds it one JSON command per line over a pipe: a pose 30 times a
+second (interpolated between the simulator's 10 Hz ticks so the aircraft moves
+smoothly), new trail points as the flight lays them down, and an obstacle to
+spawn when the flight reaches one. The bridge keeps the trail itself and
+redraws it on a timer that eases off as it grows, because a marker is always
+redrawn from all of its points.
 
-`viewer/index.html` is a single file of vanilla JS that animates a run in 3D
-with three.js (loaded from a CDN via an import map -- no build step, no
-`node_modules`, but it does want an internet connection the first time). It
-draws the geofence, no-fly zones, obstacles as they appear, the planned route,
-the flown path as it is flown, and a ghost marker showing where GPS *said* the
-aircraft was.
-
-`serve_viewer.py` uses Python's own `http.server`, so there is nothing to
-install. It writes `viewer/runs.json` so the viewer's dropdown lists past runs,
-then opens `viewer/index.html?run=/runs/<file>`. Run files are self-contained
-(`runs/<mission>_<stamp>.json`, schema 2), so a past flight replays without
-re-simulating.
-
-See [Run](#run) for the commands and the viewer's controls.
-
+Run files are self-contained (`runs/<mission>_<stamp>.json`, schema 2), so a
+past flight replays without re-simulating.
 
 ## Test
 
 ```bash
-.venv/bin/python -m pytest          # 279 tests, about 2 seconds
-cd web && npx tsc --noEmit          # the studio type-checks
+.venv/bin/python -m pytest          # 287 tests, about 4 seconds
 ```
 
 Every test mocks the Gemini client; an autouse fixture replaces the real
@@ -874,7 +738,7 @@ run files are covered without a key and without a network.
   the checks; add a new check as a function in `verifier/checks.py` plus a
   `ViolationType`.
 - `sim/`: done. Tune the airframe in `SimConfig` and the disturbances in
-  `Wind` / `FaultSchedule`; bridging to PX4/Gazebo later means reimplementing
+  `Wind` / `FaultSchedule`; bridging to PX4 later means reimplementing
   `Executor.run()` and keeping the generator interface.
 - `feedback/stub_feedback.py`: set `replan_required=True` to trigger the
   adaptation loop. `orchestrator/loop.py` counts these in `MissionReport.replans`;
@@ -886,7 +750,7 @@ run files are covered without a key and without a network.
 - `api/`: the routes are thin. New capability belongs in the packages they call,
   not here; `api/missions.py` is the only file with logic of its own, and that
   logic is the stage-by-stage reporting.
-- `web/`: `lib/scene/build.ts` is the 3D, `lib/useMission.ts` folds the event
-  stream into what the page draws, and `components/MissionBox.tsx` is the front
-  door. There is no state library: the playhead is a plain object in
-  `lib/playback.ts` because it moves at frame rate and React does not.
+- `gazebo/`: `scene.py` writes the world, `launch.py` runs the three processes
+  and flies the ticks, `bridge.py` is the only thing that talks to Gazebo. A
+  PX4/Gazebo backend would replace `Executor.run()`, not any of this: the world
+  export is the half of that job already done.

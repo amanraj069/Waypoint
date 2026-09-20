@@ -72,7 +72,7 @@ class UAVState:
         return math.sqrt(sum(component**2 for component in self.gps_offset))
 
     def as_record(self) -> dict:
-        """The flat dict written to a run file and read by the viewer."""
+        """The flat dict written to a run file and replayed in Gazebo."""
         record = {
             "timestamp": round(self.timestamp, 4),
             "x": self.x,

@@ -28,7 +28,6 @@ CACHE = Path.home() / ".cache" / "waypoint" / "gazebo"
 
 FRAME_RATE = 30.0
 TRAIL_EVERY = 0.5  # seconds of flight between trail points
-REDRAW_EVERY = 0.5  # wall seconds between trail redraws
 
 
 class GazeboError(RuntimeError):
@@ -148,15 +147,15 @@ def _fly(
 
     events = sorted(run.get("events") or [], key=lambda e: e["t"])
     late = sorted(scene.late, key=lambda o: o.t)
-    trail: list[list[float]] = []
+    fresh: list[list[float]] = []  # trail points the bridge has not been sent yet
     next_trail = 0.0
-    last_redraw = 0.0
     next_status = 0.0
     duration = ticks[-1]["timestamp"]
     print(f"\n  flying {duration:.1f}s of flight at {speed:g}x\n")
 
     started = time.monotonic()
     index = 0
+    frame = 0
     while True:
         if window is not None and window.poll() is not None:
             return
@@ -176,13 +175,15 @@ def _fly(
         while late and late[0].t <= t:
             send({"op": "spawn", "sdf": late.pop(0).sdf})
         if t >= next_trail:
-            trail.append([round(x, 2), round(y, 2), round(z, 2)])
+            fresh.append([round(x, 2), round(y, 2), round(z, 2)])
             next_trail = t + TRAIL_EVERY
-        if time.monotonic() - last_redraw >= REDRAW_EVERY or t >= duration:
-            send({"op": "trail", "points": trail})
-            last_redraw = time.monotonic()
+        # Only what is new: the bridge keeps the line and decides when to redraw.
+        done = t >= duration
+        if fresh or done:
+            send({"op": "trail", "points": fresh, "final": done})
+            fresh = []
 
-        if t >= duration:
+        if done:
             print(f"  {_status(ticks[-1])}")
             for event in events:
                 print(f"  t={event['t']:7.1f}s  {event['type']:14} {event['description']}")
@@ -190,7 +191,12 @@ def _fly(
         if t >= next_status:
             print(f"  {_status(a)}")
             next_status = t + 5.0
-        time.sleep(1.0 / FRAME_RATE)
+        # Sleep to the next frame rather than for a whole frame, so the work
+        # each one costs does not push playback behind the flight's own clock.
+        # The window redraws at FRAME_RATE whatever `speed` is; speed only
+        # changes how much flight each frame covers.
+        frame += 1
+        time.sleep(max(0.0, started + frame / FRAME_RATE - time.monotonic()))
 
 
 def _yaw(a: dict, b: dict, f: float) -> float:

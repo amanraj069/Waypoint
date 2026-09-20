@@ -68,10 +68,6 @@ class SimConfig(BaseModel):
     )
     home: Vector = (0.0, 0.0, 0.0)
 
-    @property
-    def ticks_per_second(self) -> float:
-        return 1.0 / self.dt
-
 
 class Wind(BaseModel):
     """A wind vector that may vary slowly, plus optional seeded turbulence.
@@ -104,10 +100,6 @@ class Wind(BaseModel):
             rng = random.Random(f"{self.seed}:{round(t * 1000)}")
             wind = [component + rng.gauss(0.0, self.turbulence) for component in wind]
         return (wind[0], wind[1], wind[2])
-
-    @property
-    def is_still(self) -> bool:
-        return not any(self.vector) and not any(self.variation) and not self.turbulence
 
 
 NO_WIND = Wind()

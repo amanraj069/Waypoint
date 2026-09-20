@@ -28,7 +28,7 @@ from world.models import World
 WORLD_NAME = "waypoint"
 UAV_NAME = "uav"
 
-# The studio's daylight palette (web/lib/scene/palette.ts), so the two agree.
+# The daylight palette the scene is drawn in.
 GROUND = {
     "base": "#dcd6c8",
     "valley": "#a9bf8c",
@@ -136,7 +136,7 @@ def write_terrain(world: World, out_dir: Path, extent: tuple[float, ...]) -> Non
     cell = max(CELL, (maxx - minx) / MAX_CELLS, (maxy - miny) / MAX_CELLS)
     xs = np.linspace(minx, maxx, int(math.ceil((maxx - minx) / cell)) + 1)
     ys = np.linspace(miny, maxy, int(math.ceil((maxy - miny) / cell)) + 1)
-    heights = np.array([[world.elevation_at(x, y) for x in xs] for y in ys])
+    heights = _sample(world, xs, ys)
 
     # Normals from the height field's slope, so hills are lit like hills.
     gy, gx = np.gradient(heights, ys, xs)
@@ -163,25 +163,68 @@ def write_terrain(world: World, out_dir: Path, extent: tuple[float, ...]) -> Non
         kinds[shapely.contains_xy(polygon, gcx, gcy)] = area.kind
 
     cols = len(xs)
-    lines = ["mtllib terrain.mtl"]
-    lines += [f"v {x:.2f} {y:.2f} {heights[j, i]:.2f}" for j, y in enumerate(ys) for i, x in enumerate(xs)]
-    lines += [
-        f"vn {n[0]:.4f} {n[1]:.4f} {n[2]:.4f}" for n in normals.reshape(-1, 3)
-    ]
+    grid_x = np.repeat(xs[None, :], len(ys), axis=0)
+    grid_y = np.repeat(ys[:, None], len(xs), axis=1)
+    parts = ["mtllib terrain.mtl\n"]
+    parts.append(_verts(np.stack([grid_x, grid_y, heights], axis=-1).reshape(-1, 3)))
+    parts.append(_normals(normals.reshape(-1, 3)))
+    # One quad per cell rather than two triangles: the mesh Gazebo ends up with
+    # is the same (it triangulates on load) from half as many lines of OBJ.
     for kind in sorted(set(kinds.flat)):
-        lines.append(f"usemtl {kind}")
-        for j, i in zip(*np.nonzero(kinds == kind)):
-            a = j * cols + i + 1  # OBJ indices are 1-based
-            b, c, d = a + 1, a + cols + 1, a + cols
-            lines.append(f"f {a}//{a} {b}//{b} {c}//{c}")
-            lines.append(f"f {a}//{a} {c}//{c} {d}//{d}")
-    (out_dir / "terrain.obj").write_text("\n".join(lines) + "\n")
+        parts.append(f"usemtl {kind}\n")
+        j, i = np.nonzero(kinds == kind)
+        a = j * cols + i + 1  # OBJ indices are 1-based
+        corners = np.stack([a, a + 1, a + cols + 1, a + cols], axis=-1)
+        parts.append(_faces(corners))
+    (out_dir / "terrain.obj").write_text("".join(parts))
 
     materials = []
     for kind, colour in GROUND.items():
         r, g, b, _ = _rgba(colour)
         materials += [f"newmtl {kind}", f"Ka {r} {g} {b}", f"Kd {r} {g} {b}", "Ks 0 0 0", ""]
     (out_dir / "terrain.mtl").write_text("\n".join(materials))
+
+
+def _sample(world: World, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+    """`world.elevation_at` over a whole grid at once.
+
+    The same bilinear read as `Terrain.elevation_at`, done in numpy: a city
+    grid is ~90,000 posts, and one Python call each is most of a scene build.
+    """
+    terrain = world.terrain
+    if terrain is None:
+        return np.zeros((len(ys), len(xs)))
+
+    posts = np.asarray(terrain.heights)
+    cols = np.clip((xs - terrain.origin_x) / terrain.spacing, 0.0, terrain.cols - 1.0)
+    rows = np.clip((ys - terrain.origin_y) / terrain.spacing, 0.0, terrain.rows - 1.0)
+    c0 = np.floor(cols).astype(int)
+    r0 = np.floor(rows).astype(int)
+    c1 = np.minimum(c0 + 1, terrain.cols - 1)
+    r1 = np.minimum(r0 + 1, terrain.rows - 1)
+    fc = (cols - c0)[None, :]
+    fr = (rows - r0)[:, None]
+
+    top = posts[r0[:, None], c0[None, :]] * (1 - fc) + posts[r0[:, None], c1[None, :]] * fc
+    bottom = posts[r1[:, None], c0[None, :]] * (1 - fc) + posts[r1[:, None], c1[None, :]] * fc
+    return top * (1 - fr) + bottom * fr
+
+
+def _verts(values: np.ndarray) -> str:
+    """`v` lines for an (n, 3) array. `tolist()` first: formatting numpy
+    scalars one at a time costs more than the whole conversion does."""
+    return "".join([f"v {x:.2f} {y:.2f} {z:.2f}\n" for x, y, z in values.tolist()])
+
+
+def _normals(values: np.ndarray) -> str:
+    return "".join([f"vn {x:.3f} {y:.3f} {z:.3f}\n" for x, y, z in values.tolist()])
+
+
+def _faces(corners: np.ndarray) -> str:
+    """`f a//a b//b ...` lines: the vertex and its normal always share an index."""
+    return "".join(
+        [f"f {a}//{a} {b}//{b} {c}//{c} {d}//{d}\n" for a, b, c, d in corners.tolist()]
+    )
 
 
 def _relief_kind(world: World) -> str:

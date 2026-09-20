@@ -1,21 +1,18 @@
 #!/usr/bin/env python3
-"""Fly a verified plan through the simulator and write a run file for the viewer.
+"""Fly a verified plan through the simulator and watch it in Gazebo.
 
-    # fly a saved plan with the sample fault schedule, then watch it
-    python scripts/simulate.py --plan /tmp/plan.json --serve
+    # fly a saved plan with the sample fault schedule, and watch it
+    python scripts/simulate.py --plan /tmp/plan.json --gazebo
 
     # plan it live with Gemini first (spends tokens)
-    python scripts/simulate.py "survey the north field" --serve
+    python scripts/simulate.py "survey the north field" --gazebo
 
-    # a calm, fault-free reference run
+    # a calm, fault-free reference run, written but not watched
     python scripts/simulate.py --plan /tmp/plan.json --faults none
-
-    # watch it fly in Gazebo instead of the browser viewer
-    python scripts/simulate.py --plan examples/plans/lodhi_garden_tour.json --world lodhi --gazebo
 
 The plan is verified before it flies -- the simulator is not a way around the
 safety gate -- and the finished run is written to runs/<mission>_<stamp>.json,
-which `viewer/index.html` loads directly.
+which `scripts/gazebo_view.py` replays.
 """
 
 from __future__ import annotations
@@ -222,8 +219,6 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--runs-dir", type=Path, default=Path("runs"))
     parser.add_argument("--quiet", action="store_true", help="Suppress per-second telemetry.")
     parser.add_argument("--force", action="store_true", help="Fly even if verification fails.")
-    parser.add_argument("--serve", action="store_true", help="Open the 3D viewer on this run.")
-    parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--gazebo", action="store_true", help="Watch this run fly in Gazebo.")
     parser.add_argument("--speed", type=float, default=1.0, help="Gazebo playback speed.")
     args = parser.parse_args(argv)
@@ -336,12 +331,7 @@ def main(argv: list[str]) -> int:
         except GazeboError as exc:
             print(f"Gazebo: {exc}", file=sys.stderr)
             return 1
-    if args.serve:
-        from serve_viewer import serve  # noqa: PLC0415 -- optional path
-
-        serve(report.run_file, port=args.port)
-    else:
-        print(f"  watch it:  {python_command()} scripts/serve_viewer.py {report.run_file}")
+    print(f"  watch it:  {python_command()} scripts/gazebo_view.py {report.run_file}")
     return 0
 
 

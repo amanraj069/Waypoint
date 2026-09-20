@@ -64,6 +64,10 @@ def main() -> int:
 
     camera = node.advertise("/gui/track", CameraTrack)
     follow = 0  # frames left to keep asking the camera to follow
+    # The flight sends the trail a few points at a time and this keeps the
+    # whole line, because a marker is always redrawn from all of its points.
+    trail: list[list[float]] = []
+    drawn = 0.0
     for line in sys.stdin:
         if not line.strip():
             continue
@@ -78,8 +82,14 @@ def main() -> int:
             camera.publish(_follow(args.model))
         if op == "pose":
             node.request(set_pose, _pose(args.model, command), Pose, Boolean, TIMEOUT_MS)
-        elif op == "trail" and offered("/marker"):
-            node.request("/marker", _trail(command["points"]), Marker, Boolean, TIMEOUT_MS)
+        elif op == "trail":
+            trail.extend(command["points"])
+            # Every redraw costs the whole line, so a long flight redraws less
+            # often: 0.5 s at first, easing to 2 s once the trail is long.
+            due = min(0.5 + len(trail) / 400.0, 2.0)
+            if (command.get("final") or time.monotonic() - drawn >= due) and offered("/marker"):
+                node.request("/marker", _trail(trail), Marker, Boolean, TIMEOUT_MS)
+                drawn = time.monotonic()
         elif op == "spawn":
             factory = EntityFactory(sdf=command["sdf"], allow_renaming=True)
             node.request(create, factory, EntityFactory, Boolean, TIMEOUT_MS * 4)
