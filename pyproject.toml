@@ -9,6 +9,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "plotly>=6.0",
     "shapely>=2.0",
+    "numpy>=1.26",          # the Gazebo terrain mesh
 ]
 
 [project.optional-dependencies]
@@ -16,7 +17,7 @@ dev = [
     "pytest>=8.0",
     "httpx>=0.27",          # fastapi's TestClient
 ]
-web = [
+api = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
 ]
@@ -29,7 +30,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["planner", "verifier", "sim", "feedback", "orchestrator", "world", "api"]
+packages = ["planner", "verifier", "sim", "feedback", "orchestrator", "world", "api", "gazebo"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

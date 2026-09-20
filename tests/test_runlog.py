@@ -126,7 +126,7 @@ def test_the_run_file_carries_the_simulator_settings(tmp_path):
     assert run["events"][-1]["type"] == "LANDED"
 
 
-def test_obstacles_are_recorded_for_the_viewer(tmp_path):
+def test_obstacles_are_recorded_for_the_replay(tmp_path):
     from planner import Obstacle
     from sim import FaultEvent, FaultSchedule, FaultType, Trigger
 

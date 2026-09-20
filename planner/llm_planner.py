@@ -11,8 +11,6 @@ import json
 import logging
 from typing import Any
 
-from google import genai
-from google.genai import errors as genai_errors
 from pydantic import ValidationError
 
 from typing import TYPE_CHECKING
@@ -34,6 +32,7 @@ RESPONSE_FORMAT = {
 }
 
 if TYPE_CHECKING:  # avoids a cycle: world imports planner.models
+    from google import genai
     from world.models import World
 
 log = logging.getLogger(__name__)
@@ -56,6 +55,8 @@ def _api_error_types() -> tuple[type[BaseException], ...]:
     base is looked up defensively: if the SDK moves it, we still catch the
     public one rather than failing to import.
     """
+    from google.genai import errors as genai_errors
+
     types: list[type[BaseException]] = [genai_errors.APIError]
     try:
         from google.genai._gaos.lib.compat_errors import (  # type: ignore[import-not-found]
@@ -68,7 +69,16 @@ def _api_error_types() -> tuple[type[BaseException], ...]:
     return tuple(types)
 
 
-API_ERRORS = _api_error_types()
+#: Filled in on the first call, because importing the SDK costs a quarter of a
+#: second and replaying a flight never needs it.
+API_ERRORS: tuple[type[BaseException], ...] = ()
+
+
+def api_errors() -> tuple[type[BaseException], ...]:
+    global API_ERRORS
+    if not API_ERRORS:
+        API_ERRORS = _api_error_types()
+    return API_ERRORS
 
 
 def _should_shift(exc: BaseException) -> bool:
@@ -80,23 +90,41 @@ def _should_shift(exc: BaseException) -> bool:
         return type(exc).__name__ in {"APIConnectionError", "APITimeoutError", "NoResponseError"}
     return status in _SHIFTABLE_STATUSES
 
+def _http_options():
+    """The SDK retries 429s and 5xxs by itself with backoff, for minutes, and
+    never raises -- so a spent quota looked like a mission stuck in planning
+    forever. Fail fast instead: the model ladder is the retry policy, and a
+    failure the operator can see beats a spinner."""
+    from google.genai import types as genai_types
+
+    return genai_types.HttpOptions(retry_options=genai_types.HttpRetryOptions(attempts=0))
+
+#: Seconds to wait for one plan. client.interactions ignores HttpOptions.timeout,
+#: so this is passed on every call.
+REQUEST_TIMEOUT_S = 120.0
+
 _client: genai.Client | None = None
 
 
 def get_client() -> genai.Client:
     """Return a process-wide Gemini client.
 
-    The key comes from GEMINI_API_KEY (via the environment or .env) and is read
-    by the SDK itself; it is never passed in or stored here.
+    The key comes from GEMINI_API_KEY1, GEMINI_API_KEY2, ... (or a plain
+    GEMINI_API_KEY) via planner.config, and is handed to the SDK explicitly: the
+    SDK on its own only looks at GEMINI_API_KEY / GOOGLE_API_KEY, so numbered
+    keys would otherwise be invisible to it.
     """
     global _client
     if _client is None:
-        if get_api_key() is None:
+        api_key = get_api_key()
+        if api_key is None:
             raise PlannerResponseError(
                 f"{API_KEY_VAR} is not set. Put your Gemini API key in .env "
                 f"(see .env.example) or export {API_KEY_VAR} before planning."
             )
-        _client = genai.Client()
+        from google import genai
+
+        _client = genai.Client(api_key=api_key, http_options=_http_options())
     return _client
 
 
@@ -161,8 +189,9 @@ def _request_plan(
                 system_instruction=SYSTEM_PROMPT,
                 input=user_prompt,
                 response_format=RESPONSE_FORMAT,
+                timeout=REQUEST_TIMEOUT_S,
             )
-        except API_ERRORS as exc:
+        except api_errors() as exc:
             attempts.append(f"{model}: {type(exc).__name__}: {exc}")
             is_last = position == len(ladder) - 1
             if not _should_shift(exc) or is_last:

@@ -1,19 +1,9 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv-gz/
 .pytest_cache/
 *.egg-info/
 experiments/runs/
 .env
 runs/
-viewer/runs.json
-viewer/preview.json
-viewer/session.json
-
-# The studio
-web/node_modules/
-web/.next/
-web/out/
-web/next-env.d.ts
-web/.env*.local
-viewer/worlds.json

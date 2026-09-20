@@ -6,7 +6,7 @@ verification result, the planned waypoints (each tagged with its subtask), the
 simulator settings, the fault schedule, the obstacles that existed or appeared,
 the flight event timeline and every telemetry tick.
 
-Schema 2 added the simulator sections; `viewer/index.html` reads this file
+Schema 2 added the simulator sections; `gazebo/scene.py` reads this file
 directly.
 """
 

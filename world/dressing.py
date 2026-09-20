@@ -116,14 +116,14 @@ def dress_vista(rng: random.Random, terrain: Terrain, standing: list[Building]):
 
     # The avenue trees, one species to a road.
     for index, (name, path, width) in enumerate(_VISTA_ROADS[1:]):
-        added += L.line_trees(rng, lot, ground, path, width / 2 + 5, 21.0,
+        added += L.line_trees(rng, lot, ground, path, width / 2 + 5, 34.0,
                               f"{name} {_AVENUE_SPECIES[index % len(_AVENUE_SPECIES)]}",
                               heights=(10.0, 16.0), spreads=(3.0, 4.5))
 
     # The bungalow zone: a house on every plot the plan left free, set back
     # behind its lawn and its trees.
     lines = [line for _, line in named]
-    step = 58.0
+    step = 84.0
     y = -half + step / 2
     count = 0
     while y < half:
@@ -150,16 +150,16 @@ def dress_vista(rng: random.Random, terrain: Terrain, standing: list[Building]):
                 continue
             added.append(house)
             areas.append(L.area(plot, "garden", f"the garden of {house.name}"))
-            added += L.plant(rng, lot, ground, plot, rng.randint(2, 5),
+            added += L.plant(rng, lot, ground, plot, rng.randint(1, 2),
                              (f"{road} garden neem", f"{road} garden mango"),
                              heights=(8.0, 14.0), spreads=(2.8, 4.8), gap=1.0)
         y += step
 
     # Trees in whatever is left: the Secretariat lawns, the verges, the estate.
     everywhere = L.rect(-half, -half, half, half)
-    added += L.plant(rng, lot, ground, estate, 45, ("Mughal Gardens cypress", "estate maulsari"),
+    added += L.plant(rng, lot, ground, estate, 18, ("Mughal Gardens cypress", "estate maulsari"),
                      heights=(8.0, 13.0), spreads=(2.2, 3.6), gap=4.0)
-    added += L.plant(rng, lot, ground, everywhere, 260, ("neem", "jamun", "arjun", "peepal"),
+    added += L.plant(rng, lot, ground, everywhere, 70, ("neem", "jamun", "arjun", "peepal"),
                      heights=(9.0, 16.0), spreads=(3.0, 5.5), gap=3.0)
     return added, areas
 
@@ -259,23 +259,23 @@ def dress_lodhi(rng: random.Random, terrain: Terrain, standing: list[Building], 
     added: list[Building] = []
 
     # The garden is a wood with lawns in it, not a lawn with trees.
-    added += L.plant(rng, lot, ground, L.disc(-182, 300, 70), 30,
+    added += L.plant(rng, lot, ground, L.disc(-182, 300, 70), 12,
                      ("old grove neem", "old grove peepal", "old grove banyan"),
                      heights=(11.0, 21.0), spreads=(4.5, 8.0), gap=0.5)
-    added += L.plant(rng, lot, ground, garden, 300,
+    added += L.plant(rng, lot, ground, garden, 140,
                      ("garden neem", "garden jamun", "garden arjun", "garden peepal",
                       "garden amaltas", "garden silk cotton"),
                      heights=(8.0, 19.0), spreads=(3.0, 7.0), gap=2.0)
 
     # Lodhi Colony: rows of four-storey flats south of Lodhi Road.
-    for index, y in enumerate(range(-112, -470, -30)):
+    for index, y in enumerate(range(-112, -470, -46)):
         shift = 0 if index % 2 == 0 else 22
-        for x in range(-440 + shift, 470, 50):
+        for x in range(-440 + shift, 470, 76):
             block = L.build_on(lot, ground, L.rotated_box(x, y, 38, 11), rng.uniform(11.0, 14.0),
                                f"Lodhi Colony block {len(added) % 97 + 1}", gap=2.0)
             if block:
                 added.append(block)
-    added += L.plant(rng, lot, ground, L.rect(-half, -half, half, -90), 180,
+    added += L.plant(rng, lot, ground, L.rect(-half, -half, half, -90), 50,
                      ("Lodhi Colony neem", "Lodhi Colony jamun"),
                      heights=(8.0, 15.0), spreads=(3.0, 5.0), gap=1.5)
 
@@ -295,13 +295,13 @@ def dress_lodhi(rng: random.Random, terrain: Terrain, standing: list[Building], 
                                    rng.uniform(*height), f"a house in {place}", kind="house", gap=4.0)
                 if house:
                     added.append(house)
-                x += 36
-            y += 34
-        added += L.plant(rng, lot, ground, region, 60, (f"{place} neem", f"{place} jamun"),
+                x += 54
+            y += 50
+        added += L.plant(rng, lot, ground, region, 20, (f"{place} neem", f"{place} jamun"),
                          heights=(8.0, 15.0), spreads=(3.0, 5.5), gap=1.0)
 
     for name, path, width in _LODHI_ROADS[:3]:
-        added += L.line_trees(rng, lot, ground, path, width / 2 + 4, 18.0, f"{name} neem",
+        added += L.line_trees(rng, lot, ground, path, width / 2 + 4, 32.0, f"{name} neem",
                               heights=(10.0, 15.0), spreads=(3.0, 4.5))
     return added, areas
 
@@ -388,14 +388,14 @@ def dress_chowk(rng: random.Random, standing: list[Building]):
     # wide enough to walk down, behind the shopfronts on both sides.
     all_lanes = named + lane_named
     for region in (L.rect(-470, 62, 280, 262), L.rect(-470, -228, 280, -62),
-                   L.rect(-470, -470, 200, -244), L.rect(-470, 62, -300, 330)):
+                   L.rect(-470, 62, -300, 330)):
         minx, miny, maxx, maxy = region.bounds
         y = miny + 11
         while y < maxy - 6:
             x = minx + 12
             while x < maxx - 6:
                 w, d = rng.uniform(17, 25), rng.uniform(15, 21)
-                if rng.random() < 0.08:          # a courtyard, or a small square
+                if rng.random() < 0.3:          # a courtyard, or a small square
                     x += w + 4
                     continue
                 cx, cy = x + w / 2 + rng.uniform(-1.5, 1.5), y + rng.uniform(-1.5, 1.5)
@@ -409,13 +409,13 @@ def dress_chowk(rng: random.Random, standing: list[Building]):
                 x += w + rng.uniform(3.5, 6.0)
             y += rng.uniform(21, 26)
 
-    added += L.plant(rng, lot, ground, jama_park, 30, ("Jama Masjid park neem", "Jama Masjid park peepal"),
+    added += L.plant(rng, lot, ground, jama_park, 14, ("Jama Masjid park neem", "Jama Masjid park peepal"),
                      heights=(9.0, 15.0), spreads=(3.5, 6.0), gap=1.5)
-    added += L.plant(rng, lot, ground, fort, 70, ("Red Fort garden mango", "Red Fort garden neem"),
+    added += L.plant(rng, lot, ground, fort, 30, ("Red Fort garden mango", "Red Fort garden neem"),
                      heights=(8.0, 14.0), spreads=(3.0, 5.0), gap=2.0)
-    added += L.plant(rng, lot, ground, maidan, 22, ("Red Fort maidan neem",),
+    added += L.plant(rng, lot, ground, maidan, 10, ("Red Fort maidan neem",),
                      heights=(9.0, 14.0), spreads=(3.0, 5.0), gap=6.0)
-    added += L.line_trees(rng, lot, ground, road_specs[1][1], 10.0, 18.0,
+    added += L.line_trees(rng, lot, ground, road_specs[1][1], 10.0, 30.0,
                           "Netaji Subhash Marg peepal", heights=(10.0, 15.0), spreads=(3.0, 4.5))
     return added, areas
 
@@ -514,7 +514,7 @@ def dress_munnar(rng: random.Random, terrain: Terrain, standing: list[Building],
     # Munnar town: shops and houses packed along the roads in the valley floor.
     lines = [line for _, line in named]
     for _ in range(900):
-        if sum(1 for b in added if b.kind == "house") >= 150:
+        if sum(1 for b in added if b.kind == "house") >= 70:
             break
         angle = rng.uniform(0, math.tau)
         distance = math.sqrt(rng.uniform((PAD_KEEP_CLEAR + 8) ** 2, 175 ** 2))
@@ -537,7 +537,7 @@ def dress_munnar(rng: random.Random, terrain: Terrain, standing: list[Building],
             added.append(made)
 
     # Estate lines: the long low rows of workers' houses on the estates.
-    for index in range(16):
+    for index in range(8):
         estate = tea[index % 4]
         minx, miny, maxx, maxy = estate.bounds
         for _ in range(30):
@@ -550,12 +550,12 @@ def dress_munnar(rng: random.Random, terrain: Terrain, standing: list[Building],
                     break
 
     # Silver oak shading the tea, the shola in the folds, gums on the edges.
-    added += L.plant(rng, lot, ground, unary_union(tea), 320, ("tea estate silver oak",),
-                     heights=(12.0, 19.0), spreads=(2.4, 3.6), gap=10.0)
-    added += L.plant(rng, lot, ground, unary_union(shola), 170, ("shola forest tree",),
+    added += L.plant(rng, lot, ground, unary_union(tea), 110, ("tea estate silver oak",),
+                     heights=(12.0, 19.0), spreads=(2.4, 3.6), gap=18.0)
+    added += L.plant(rng, lot, ground, unary_union(shola), 80, ("shola forest tree",),
                      heights=(13.0, 24.0), spreads=(4.5, 8.0), gap=0.3)
-    added += L.plant(rng, lot, ground, unary_union(eucalyptus), 70, ("eucalyptus",),
+    added += L.plant(rng, lot, ground, unary_union(eucalyptus), 30, ("eucalyptus",),
                      heights=(22.0, 30.0), spreads=(2.4, 3.4), gap=1.0)
-    added += L.plant(rng, lot, ground, town, 45, ("town jacaranda", "town rain tree"),
+    added += L.plant(rng, lot, ground, town, 20, ("town jacaranda", "town rain tree"),
                      heights=(8.0, 14.0), spreads=(3.0, 5.0), gap=2.0)
     return added, areas

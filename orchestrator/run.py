@@ -27,6 +27,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="With --plot, write the HTML but do not open a browser.",
     )
+    parser.add_argument(
+        "--gazebo",
+        action="store_true",
+        help="Watch the flown mission in Gazebo once it lands.",
+    )
     args = parser.parse_args(argv)
 
     # So model-shift warnings from the planner reach the operator.
@@ -53,6 +58,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\nNothing to plot: {exc}", file=sys.stderr)
             return 1
         print(f"  plot written to {out}")
+
+    if args.gazebo and report.run_file and report.states:
+        from gazebo.launch import GazeboError, play
+        from orchestrator.runlog import read_run
+
+        try:
+            play(read_run(report.run_file))
+        except GazeboError as exc:
+            print(f"\nGazebo: {exc}", file=sys.stderr)
+            return 1
 
     return 0 if report.completed else 1
 

@@ -177,7 +177,7 @@ def build_world(
 
     buildings: list[Building] = []
     for element in payload.get("elements", ()):
-        if element.get("type") != "way" or "building" not in element.get("tags", {}):
+        if element.get("type") != "way" or _is_ground(element.get("tags", {})):
             continue
         ring = [nodes[ref] for ref in element.get("nodes", ()) if ref in nodes]
         if len(ring) < 4:
@@ -229,6 +229,18 @@ def build_world(
 
 
 # -- ground cover -----------------------------------------------------------
+
+_GROUND_KEYS = ("highway", "landuse", "leisure", "natural", "amenity", "man_made",
+                "railway", "waterway")
+
+
+def _is_ground(tags: dict) -> bool:
+    """A way that describes the ground rather than a building on it.
+
+    Anything tagged `building` is a building whatever else it says; so is an
+    untagged way, which is what the building-only query used to return.
+    """
+    return "building" not in tags and any(key in tags for key in _GROUND_KEYS)
 
 # Carriageway widths, roughly: enough to tell an arterial from a lane.
 _ROAD_WIDTH = {
@@ -337,7 +349,7 @@ def ground_from(payload: dict, lat: float, lon: float, frame: Polygon) -> list[A
         if element.get("type") != "way":
             continue
         tags = element.get("tags", {})
-        if "building" in tags:
+        if not _is_ground(tags):
             continue
         coords = _way_points(element, nodes, lat, lon)
         if len(coords) < 2:

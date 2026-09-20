@@ -101,7 +101,7 @@ def preview_world(world_id: str) -> dict:
     constraints, notes = constraints_for(world, None)
     return {
         "schema_version": 2,
-        "mission_text": f"{world.name} — nothing has flown here yet",
+        "mission_text": f"{world.name}: nothing has flown here yet",
         "preview": True,
         "constraints": constraints.model_dump(mode="json"),
         "constraint_notes": notes,
@@ -127,9 +127,9 @@ def survey_site(
 ) -> dict:
     """Can the aircraft stand here?
 
-    The 3D view asks this every time somebody clicks the ground, so that where
-    a pad may go is decided in one place -- here -- rather than being guessed
-    again in the browser and disagreeing with the flight.
+    A client asks this before it places a pad, so that where a pad may go is
+    decided in one place -- here -- rather than being guessed somewhere else
+    and disagreeing with the flight.
     """
     try:
         world = catalog.load_world(world_id)

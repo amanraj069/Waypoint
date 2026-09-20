@@ -14,8 +14,8 @@ Three things make it a simulator rather than an interpolator:
 * it can run out of battery, in which case it stops flying the plan and lands.
 
 Every run also collects a list of `RunEvent`s -- faults firing and expiring,
-waypoints reached, separation lost, touchdown -- which is what the run log and
-the 3D viewer draw on the timeline.
+waypoints reached, separation lost, touchdown -- which is what the run log
+keeps and Gazebo prints as the flight plays.
 """
 
 from __future__ import annotations

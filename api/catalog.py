@@ -1,7 +1,7 @@
 """Reading what is already on disk: worlds, runs and bundled plans.
 
-Everything here is a pure function of the filesystem, so the web app's lists
-and the CLI's lists are the same lists.
+Everything here is a pure function of the filesystem, so the API's lists and
+the CLI's lists are the same lists.
 """
 
 from __future__ import annotations
@@ -74,10 +74,6 @@ def world_cards() -> list[dict]:
     order = {key: index for index, key in enumerate(BUILT_IN)}
     cards.sort(key=lambda card: (order.get(card["id"], len(order)), card["id"]))
     return cards
-
-
-def landmark_names(world_id: str) -> list[str]:
-    return [landmark.name for landmark in load_world(world_id).landmarks]
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,8 @@
-"""Running a mission for the web app, one event at a time.
+"""Running a mission for an HTTP client, one event at a time.
 
 This is `scripts/explore.py`'s `fly()` turned inside out. The CLI prints each
 stage as it happens; here each stage is appended to a list and anybody watching
-is woken up, so a browser can follow a mission it did not start, join one
+is woken up, so a client can follow a mission it did not start, join one
 already in flight, and see everything it missed.
 
 A mission runs on its own thread because both halves of it block: planning is a
@@ -40,7 +40,7 @@ from verifier import DEFAULT_CONFIG, verify
 from world.landing import Site, find as find_site, survey as survey_site
 from world.models import World
 
-# The stages a mission passes through, in order. The web app draws these as a
+# The stages a mission passes through, in order. A client draws these as a
 # progress rail, so they are part of the API rather than decoration.
 STAGES = ("queued", "planning", "verifying", "replanning", "flying", "done", "failed")
 
@@ -414,8 +414,8 @@ def run_mission(mission: Mission) -> None:
         if mission.cancelled:
             break
         report.states.append(state)
-        # A tick is 0.1 s; reporting every one of them would be a denial of
-        # service on the browser. Once a simulated second is plenty to watch.
+        # A tick is 0.1 s; reporting every one of them would swamp the client.
+        # Once a simulated second is plenty to watch.
         if state.timestamp >= next_report:
             mission.emit(
                 "telemetry",
@@ -450,7 +450,7 @@ def run_mission(mission: Mission) -> None:
     outcome = "landed" if report.completed else "crashed" if report.crashed else "did not land cleanly"
     mission.finish(
         "done",
-        f"{outcome} — {report.duration:.0f} s, {report.distance_flown:.0f} m, "
+        f"{outcome}, {report.duration:.0f} s, {report.distance_flown:.0f} m, "
         f"{report.battery_remaining:.0f}% battery left",
         outcome=outcome,
         duration_s=round(report.duration, 1),
