@@ -13,9 +13,9 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from gazebo.launch import _yaw
-from gazebo.scene import UAV_NAME, WORLD_NAME, write_scene
-from world.generate import build
+from waypoint.gazebo.launch import _yaw
+from waypoint.gazebo.scene import UAV_NAME, WORLD_NAME, write_scene
+from waypoint.world.generate import build
 
 
 def _run(world=None, **extra) -> dict:

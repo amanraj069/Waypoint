@@ -21,15 +21,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from gazebo.launch import GazeboError, play  # noqa: E402
-from orchestrator.runlog import read_run  # noqa: E402
+from waypoint.gazebo.launch import GazeboError, play  # noqa: E402
+from waypoint.orchestrator.runlog import read_run  # noqa: E402
+from waypoint.paths import RUNS_DIR  # noqa: E402
+from waypoint.scenario import load_world  # noqa: E402
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("run", nargs="?", type=Path, help="A run file from runs/.")
     parser.add_argument("--latest", action="store_true", help="Replay the newest run in runs/.")
-    parser.add_argument("--world", help="Show a world with nothing flying: 'lodhi', a worlds/*.json...")
+    parser.add_argument("--world", help="Show a world with nothing flying: 'lodhi', 'gateway_of_india', or a world JSON")
     parser.add_argument("--speed", type=float, default=1.0, help="Playback speed multiplier.")
     parser.add_argument("--headless", action="store_true", help="Server only, no Gazebo window.")
     parser.add_argument("--no-follow", action="store_true", help="Leave the camera where it is.")
@@ -37,7 +39,7 @@ def main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     if args.latest:
-        runs = sorted(Path("runs").glob("*.json"), key=lambda p: p.stat().st_mtime)
+        runs = sorted(RUNS_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
         if not runs:
             parser.error("no runs in runs/ yet; fly one with scripts/simulate.py first")
         args.run = runs[-1]
@@ -46,8 +48,6 @@ def main(argv: list[str]) -> int:
         run = read_run(args.run)
         print(f"  replaying {args.run}")
     elif args.world:
-        from simulate import load_world  # noqa: PLC0415 -- sibling script
-
         world = load_world(args.world)
         run = {"world": world.model_dump(mode="json") if world else None}
     else:

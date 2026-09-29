@@ -11,11 +11,11 @@ import math
 
 import pytest
 
-from planner import Action, GeoPoint, Plan, SubTask, Waypoint
-from sim import Executor, FaultEvent, FaultSchedule, FaultType, SimConfig, Trigger
-from verifier import ViolationType, verify
-from world import Building, Terrain, World, canyon, city, rolling_terrain
-from world.osm import build_world, height_of, to_local
+from waypoint.planner import Action, GeoPoint, Plan, SubTask, Waypoint
+from waypoint.sim import Executor, FaultEvent, FaultSchedule, FaultType, SimConfig, Trigger
+from waypoint.verifier import ViolationType, verify
+from waypoint.world import Building, Terrain, World, canyon, city, rolling_terrain
+from waypoint.world.osm import build_world, height_of, to_local
 
 
 def wp(x, y, z, speed=5.0, action=Action.MOVE) -> Waypoint:
@@ -334,7 +334,7 @@ def test_an_overpass_payload_becomes_a_world():
 
 
 def test_a_payload_with_no_buildings_says_so():
-    from world.osm import OSMError
+    from waypoint.world.osm import OSMError
 
     with pytest.raises(OSMError, match="No buildings"):
         build_world({"elements": []}, 0.0, 0.0, "empty")
@@ -347,7 +347,7 @@ def test_a_payload_with_no_buildings_says_so():
 
 @pytest.fixture(scope="module")
 def the_park() -> World:
-    from world import lodhi_garden
+    from waypoint.world import lodhi_garden
 
     return lodhi_garden()
 
@@ -414,7 +414,7 @@ def test_the_park_round_trips_with_its_landmarks(the_park):
 @pytest.mark.parametrize("key", ["delhi", "lodhi", "chowk", "munnar"])
 def test_every_built_in_world_is_flyable_from_its_pad(key):
     """Whatever else a place is, the aircraft has to be able to leave it."""
-    from world import build
+    from waypoint.world import build
 
     place = build(key)
     assert place.collides(0, 0, 1) is None, "the pad is inside something"
@@ -430,7 +430,7 @@ def test_every_building_carries_a_name(key):
     This is the difference between "photograph the Jama Masjid" and a field of
     four hundred identical boxes called 'building'.
     """
-    from world import build
+    from waypoint.world import build
 
     for structure in build(key).buildings:
         assert structure.name.strip(), f"an unnamed {structure.kind} in {key}"
@@ -439,7 +439,7 @@ def test_every_building_carries_a_name(key):
 @pytest.mark.parametrize("key", ["delhi", "lodhi", "chowk", "munnar"])
 def test_every_world_is_the_same_world_every_time(key):
     """A scenario has to stay comparable while the planner changes underneath it."""
-    from world import build
+    from waypoint.world import build
 
     assert build(key).model_dump() == build(key).model_dump()
 
@@ -451,7 +451,7 @@ def test_the_landmarks_of_a_place_are_really_there():
     relationship -- which is exactly why it is worth checking that 'Bara Gumbad'
     points at Bara Gumbad and not at the lawn beside it.
     """
-    from world import lodhi_garden
+    from waypoint.world import lodhi_garden
 
     garden = lodhi_garden()
     for name in ("Bara Gumbad", "Sheesh Gumbad", "Safdarjung's Tomb"):
@@ -469,7 +469,7 @@ def test_the_secretariat_roof_is_higher_than_the_secretariat():
     the pad, because the ground under it has climbed. A planner that reads the
     building height and forgets the terrain flies into it.
     """
-    from world import lutyens_delhi
+    from waypoint.world import lutyens_delhi
 
     vista = lutyens_delhi()
     north_block = next(b for b in vista.buildings if b.name == "the North Block")
@@ -482,7 +482,7 @@ def test_chandni_chowk_is_only_flyable_down_the_middle():
     """The street is the whole scenario: 30 m of clear air and no way round."""
     from shapely.geometry import LineString
 
-    from world import chandni_chowk
+    from waypoint.world import chandni_chowk
 
     street = chandni_chowk()
     down_the_middle = LineString([(-240, 0), (280, 0)])
@@ -495,7 +495,7 @@ def test_chandni_chowk_is_only_flyable_down_the_middle():
 
 def test_the_mattupetty_dam_reaches_the_water_it_holds():
     """The dam's height is derived from the terrain, so it has to hold up."""
-    from world import munnar
+    from waypoint.world import munnar
 
     hills = munnar()
     dam = next(b for b in hills.buildings if "dam wall" in b.name)
@@ -510,7 +510,7 @@ def test_the_mattupetty_dam_reaches_the_water_it_holds():
 
 def test_osm_buildings_fall_back_through_the_names_they_do_have():
     """`building=yes` is a tag value, not a name, and neither is 'building'."""
-    from world.osm import name_of
+    from waypoint.world.osm import name_of
 
     assert name_of({"name": "Gateway of India"}, 1) == "Gateway of India"
     assert name_of({"addr:housenumber": "12", "addr:street": "Colaba Causeway"}, 1) == (
@@ -524,7 +524,7 @@ def test_osm_buildings_fall_back_through_the_names_they_do_have():
 
 def test_an_imported_place_gets_landmarks_from_its_named_buildings():
     """Otherwise the planner is handed 400 footprints and no way to say which."""
-    from world.osm import build_world
+    from waypoint.world.osm import build_world
 
     payload = {
         "elements": [
@@ -567,7 +567,7 @@ def slope_world(gradient: float) -> World:
 
 
 def test_flat_ground_is_landable():
-    from world.landing import survey
+    from waypoint.world.landing import survey
 
     site = survey(World(name="flat"), 10, 10)
 
@@ -578,7 +578,7 @@ def test_flat_ground_is_landable():
 
 
 def test_a_slope_is_measured_and_refused():
-    from world.landing import MAX_SLOPE_DEG, survey
+    from waypoint.world.landing import MAX_SLOPE_DEG, survey
 
     site = survey(slope_world(0.5), 0, 0)      # 1 in 2: about 27 degrees
 
@@ -589,7 +589,7 @@ def test_a_slope_is_measured_and_refused():
 
 
 def test_a_gentle_slope_is_still_landable():
-    from world.landing import survey
+    from waypoint.world.landing import survey
 
     site = survey(slope_world(0.02), 0, 0)     # about 1 degree
 
@@ -598,7 +598,7 @@ def test_a_gentle_slope_is_still_landable():
 
 
 def test_the_elevation_is_the_ground_under_the_pad():
-    from world.landing import survey
+    from waypoint.world.landing import survey
 
     site = survey(slope_world(0.05), 40, 0)
 
@@ -607,7 +607,7 @@ def test_the_elevation_is_the_ground_under_the_pad():
 
 
 def test_standing_on_a_building_is_not_a_site(tower_world):
-    from world.landing import survey
+    from waypoint.world.landing import survey
 
     site = survey(tower_world, 0, 100)
 
@@ -617,7 +617,7 @@ def test_standing_on_a_building_is_not_a_site(tower_world):
 
 
 def test_an_unusable_pick_moves_to_the_nearest_ground_that_works():
-    from world.landing import find
+    from waypoint.world.landing import find
 
     # Flat everywhere except a steep ridge down the middle.
     profile = [0.0, 0.0, 30.0, 0.0, 0.0]
@@ -633,7 +633,7 @@ def test_an_unusable_pick_moves_to_the_nearest_ground_that_works():
 
 
 def test_a_usable_pick_is_left_where_it_was_asked_for():
-    from world.landing import find
+    from waypoint.world.landing import find
 
     site = find(World(name="flat"), 25, -40)
 
@@ -643,7 +643,7 @@ def test_a_usable_pick_is_left_where_it_was_asked_for():
 
 
 def test_nowhere_to_land_comes_back_unusable_rather_than_wrong():
-    from world.landing import find
+    from waypoint.world.landing import find
 
     site = find(slope_world(0.5), 0, 0, search=40, step=10)
 

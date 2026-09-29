@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
-"""Look around a place, then tell the aircraft what to do, and watch it in Gazebo.
+"""Look at a place, choose where to take off and land, say what to do, watch it fly.
 
-    .venv/bin/python scripts/explore.py --world lodhi          # Lodhi Garden, Delhi
-    .venv/bin/python scripts/explore.py --world munnar         # the hills above Munnar
-    .venv/bin/python scripts/explore.py --world delhi --wind 3,0,0
+    .venv/bin/python scripts/explore.py --world lodhi
 
-Type a mission at the prompt in plain English:
+Then, at the prompt:
 
-    mission> photograph Bara Gumbad from two sides, then fly north up the avenue
+    /look                               1. see the place in Gazebo
+    /start Munnar town                  2. where it takes off   (a landmark, or x,y)
+    /land 120,-40                          and where it finishes (default: back at the start)
+    photograph Bara Gumbad, then land   3. the mission, in plain English
 
-The planner decomposes it, the verifier checks it against the buildings and the
-terrain, the simulator flies it, and Gazebo opens on the finished flight. Close
-the Gazebo window to get the prompt back, then type another mission.
+Each mission goes through the closed loop: Gemini plans it from your start to
+your landing point, the verifier checks it, the simulator flies it, the monitor
+replans in the air if something gets in the way, and Gazebo opens on the
+finished flight. Close the Gazebo window to get the prompt back.
 
-Commands: /help /look /world <spec> /wind x,y,z /faults <spec> /retries <n> /again /quit
+Pads are surveyed, not assumed: a point on a slope or inside a building is moved
+to the nearest flat, clear ground within 120 m, and you are told how far.
 """
 
 from __future__ import annotations
@@ -22,167 +25,176 @@ import argparse
 import sys
 from pathlib import Path
 
-# Both the project root (for the packages) and scripts/ (for the sibling
-# modules), so this works whether it is run as a script or imported.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from gazebo.launch import GazeboError, play  # noqa: E402
-from planner import (  # noqa: E402
-    DEFAULT_CONSTRAINTS,
-    MissionConstraints,
-    Plan,
-    PlannerError,
-    plan as make_plan,
-    replan as make_replan,
+from waypoint.backends import make_backend  # noqa: E402
+from waypoint.gazebo.launch import GazeboError, play  # noqa: E402
+from waypoint.orchestrator import run_mission  # noqa: E402
+from waypoint.orchestrator.runlog import read_run  # noqa: E402
+from waypoint.paths import RUNS_DIR, WORLDS_DIR  # noqa: E402
+from waypoint.planner import Plan  # noqa: E402
+from waypoint.scenario import (  # noqa: E402
+    constraints_for,
+    load_faults,
+    load_world,
+    pad_at,
+    parse_wind,
+    resolve_point,
 )
-from orchestrator.loop import MissionReport  # noqa: E402
-from orchestrator.runlog import read_run, write_run  # noqa: E402
-from sim import Executor, SimConfig, Wind  # noqa: E402
-from simulate import fence_around, load_faults, load_world, parse_wind, show_plan  # noqa: E402
-from verifier import verify  # noqa: E402
-from world.models import World  # noqa: E402
+from shapely.geometry import Point, Polygon  # noqa: E402
 
-ROOT = Path(__file__).resolve().parent.parent
-WORLDS = ROOT / "worlds"
+from waypoint.world.landing import Site, survey  # noqa: E402
+from waypoint.world.models import World  # noqa: E402
+
 RULE = "-" * 72
 
 
-class Live:
-    """What the next mission will be flown with.
+class Session:
+    """Everything the next mission is flown with; the prompt's commands change it."""
 
-    One object rather than a pile of local variables, because the prompt's
-    commands all reach in and change it between flights.
-    """
+    def __init__(self, args: argparse.Namespace):
+        self.args = args
+        self.wind = parse_wind(args.wind, args.turbulence)
+        self.faults = args.faults
+        self.world: World | None = None
+        self.start: Site = survey(None, 0.0, 0.0)
+        self.landing: Site | None = None  # None: back where it started
 
-    def __init__(self, world: World | None, constraints: MissionConstraints,
-                 config: SimConfig, wind: Wind, faults, retries: int):
-        self.world = world
-        self.constraints = constraints
-        self.config = config
-        self.wind = wind
-        self.faults = faults
-        self.retries = retries
+    # -- where -----------------------------------------------------------------
 
     def use_world(self, world: World | None) -> None:
-        """Switch worlds, and fence the new one."""
         self.world = world
-        if world:
-            self.constraints = self.constraints.model_copy(update={"geofence": fence_around(world)})
+        self.constraints, notes = constraints_for(world, self.args.max_altitude)
+        # Every world keeps its origin clear, so that is the default pad.
+        self.start = survey(world, 0.0, 0.0)
+        self.landing = None
+        describe_world(world)
+        for note in notes:
+            print(f"  ({note})")
+
+    def _point(self, spec: str) -> tuple[float, float, str]:
+        """Resolve a spec, and refuse anything outside the geofence."""
+        x, y, label = resolve_point(self.world, spec)
+        fence = Polygon([(p.x, p.y) for p in self.constraints.geofence])
+        if not fence.covers(Point(x, y)):
+            minx, miny, maxx, maxy = fence.bounds
+            raise ValueError(
+                f"({x:g}, {y:g}) is outside the geofence: x {minx:.0f}..{maxx:.0f}, "
+                f"y {miny:.0f}..{maxy:.0f} m"
+            )
+        return x, y, label
+
+    def set_start(self, spec: str) -> None:
+        x, y, label = self._point(spec)
+        self.start = pad_at(self.world, x, y, "take off")
+        print(f"  start: {describe_site(self.start, label)}")
+
+    def set_landing(self, spec: str) -> None:
+        if spec.strip().lower() in ("start", "home", "same", "back"):
+            self.landing = None
+            print("  landing: back at the start")
+            return
+        x, y, label = self._point(spec)
+        self.landing = pad_at(self.world, x, y, "land")
+        print(f"  landing: {describe_site(self.landing, label)}")
+
+    def show_pads(self) -> None:
+        print(f"  start:   {describe_site(self.start)}")
+        print(f"  landing: {describe_site(self.landing) if self.landing else 'back at the start'}")
+
+    @property
+    def landing_site(self) -> Site:
+        return self.landing or self.start
+
+    # -- looking and flying ----------------------------------------------------
+
+    def look(self) -> None:
+        """Gazebo on the world with the pads marked, and nothing flying."""
+        if not self.world:
+            print("  no world to look at: open space above a flat plane")
+            return
+        run = {
+            "world": self.world.model_dump(mode="json"),
+            "constraints": self.constraints.model_dump(mode="json"),
+            "pads": {"start": list(self.start.position), "landing": list(self.landing_site.position)},
+        }
+        print("  green pad: start; amber pad: landing (shown when it is somewhere else)")
+        watch(run, self.args.speed, self.world.name)
+
+    def fly(self, mission: str) -> None:
+        backend = make_backend("custom", world=self.world, wind=self.wind)
+        faults = load_faults(self.faults, Plan())
+        log = run_mission(
+            mission,
+            self.constraints,
+            faults,
+            backend,
+            world=self.world,
+            home=self.start.position,
+            landing=self.landing_site.position,
+            max_replan_attempts=self.args.max_attempts,
+            max_total_replans=self.args.max_replans,
+            runs_dir=self.args.runs_dir,
+        )
+        report = log.report
+        if self.args.no_watch or not (report and report.run_file and report.states):
+            return
+        watch(read_run(report.run_file), self.args.speed, report.run_file.name)
 
 
-def describe(world: World | None) -> None:
-    """What you are about to fly in, and the names a mission can use."""
+def describe_world(world: World | None) -> None:
     if not world:
         print(f"{RULE}\nno world: open space above a flat plane")
         return
     summary = world.summary()
+    minx, miny, maxx, maxy = world.bounds
     print(f"{RULE}\n{world.name} ({world.source}): {summary['buildings']} "
           f"obstacles ({summary['trees']} trees), tallest roof {summary['tallest_roof']:g} m, "
           f"ground {summary['elevation_min']:g}..{summary['elevation_max']:g} m")
+    print(f"x runs {minx:.0f}..{maxx:.0f} m (east), y {miny:.0f}..{maxy:.0f} m (north), "
+          "from the origin at (0, 0)")
     if world.landmarks:
-        print("you can name any of these in a mission:")
+        print("landmarks (use a name for /start and /land, or in a mission):")
         for landmark in world.landmarks:
             print(f"  - {landmark.describe()}")
 
 
+def describe_site(site: Site, label: str = "") -> str:
+    where = f"({site.x:.1f}, {site.y:.1f}), ground at {site.elevation:.1f} m"
+    named = f"{label} " if label and not label.startswith("(") else ""
+    moved = f"; moved {site.moved:.0f} m to the nearest flat, clear ground" if site.moved else ""
+    return f"{named}{where}{moved}"
+
+
 def world_names() -> list[str]:
     """Every world you can switch to: the built-in ones, then saved files."""
-    from world.generate import BUILT_IN  # noqa: PLC0415 -- keeps startup cheap
+    from waypoint.world.generate import BUILT_IN  # noqa: PLC0415 -- keeps startup cheap
 
-    saved = sorted(path.stem for path in WORLDS.glob("*.json"))
+    saved = sorted(path.stem for path in WORLDS_DIR.glob("*.json"))
     return list(BUILT_IN) + [name for name in saved if name not in BUILT_IN]
 
 
 def watch(run: dict, speed: float, label: str) -> None:
     """Open Gazebo on a run (or on a world with nothing flying) and wait for it."""
-    print(f"  opening Gazebo on {label}")
+    print(f"  opening Gazebo on {label}; close the window to come back here")
     try:
         play(run, speed=speed)
     except GazeboError as exc:
         print(f"  Gazebo: {exc}")
 
 
-def fly(mission: str, live: Live, runs_dir: Path) -> Path | None:
-    """Plan, verify (with up to `live.retries` corrections), fly, and save."""
-    world, constraints = live.world, live.constraints
-    config, wind, faults, retries = live.config, live.wind, live.faults, live.retries
-    print(f"\n{RULE}\nplanning...")
-    try:
-        plan: Plan = make_plan(mission, constraints, world=world)
-    except PlannerError as exc:
-        print(f"  planning failed: {exc}")
-        return None
-    show_plan(plan, None)
-
-    result = verify(plan, constraints, world=world)
-    for attempt in range(retries):
-        if result.passed:
-            break
-        print(f"\n{RULE}\nverifier rejected it:")
-        for violation in result.blocking:
-            print(f"  [{violation.type.value}] {violation.description}")
-        print(f"\nasking for a correction ({attempt + 1}/{retries})...")
-        try:
-            plan = make_replan(mission, plan, result.messages(), constraints, world=world)
-        except PlannerError as exc:
-            print(f"  replanning failed: {exc}")
-            break
-        show_plan(plan, None)
-        result = verify(plan, constraints, world=world)
-
-    for violation in result.warnings:
-        print(f"  [warning] [{violation.type.value}] {violation.description}")
-    if not result.passed:
-        print("\nstill unsafe -- not flying it:")
-        for violation in result.blocking:
-            print(f"  [{violation.type.value}] {violation.description}")
-        return None
-    print("  verification passed")
-
-    print(f"\n{RULE}\nflying...")
-    executor = Executor(
-        plan, constraints=constraints, config=config, wind=wind, faults=faults, world=world
-    )
-    report = MissionReport(
-        mission_text=mission,
-        plan=plan,
-        verification=result,
-        constraints=constraints,
-        sim_config=config,
-        wind=wind,
-        faults=faults,
-        world=world,
-    )
-    report.states = list(executor.run())
-    report.events = executor.event_records()
-    report.obstacles = executor.obstacle_records()
-    report.distance_flown = executor.distance_flown
-    report.crashed = executor.crashed
-
-    for event in report.events:
-        print(f"  t={event['t']:7.1f}s  {event['type']:14} {event['description']}")
-
-    outcome = "landed" if report.completed else "CRASHED" if report.crashed else "did not land cleanly"
-    print(
-        f"\n  {report.duration:.0f}s | {report.distance_flown:.0f} m flown | "
-        f"{report.battery_remaining:.1f}% battery left | {outcome}"
-    )
-
-    report.run_file = write_run(report, runs_dir=runs_dir)
-    print(f"  {report.run_file}")
-    return report.run_file
-
-
 HELP = """
-  <anything else>      a mission, in plain English
-  /look                open Gazebo on the world with nothing flying
-  /world <spec>        switch worlds: delhi, lodhi, chowk, munnar, or a worlds/*.json
-  /worlds              list the worlds you can switch to
-  /wind x,y,z          set the steady wind in m/s (/wind 0,0,0 for calm)
-  /faults <spec>       sample, none, or a schedule JSON
-  /retries <n>         how many times to ask for a correction after a rejection
-  /again               re-fly the last mission
+  1. see it       /look               open Gazebo on the world, pads marked
+                  /landmarks          list the named places
+  2. pads         /start <where>      where it takes off: a landmark name, or x,y
+                  /land <where>       where it finishes: a landmark, x,y, or 'start'
+                  /pads               show both
+  3. fly          <anything else>     a mission, in plain English
+                  /again              fly the last mission again
+
+  /world <name>   switch places (resets the pads): /worlds lists them
+  /wind x,y,z     steady wind in m/s (/wind 0,0,0 for calm)
+  /faults <spec>  none, crane_ahead, storm, gps_slip, or a schedule JSON
   /help  /quit
 """
 
@@ -190,13 +202,19 @@ HELP = """
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--world", default="lodhi",
-                        help="delhi, lodhi, chowk, munnar, or a worlds/*.json")
+                        help="a name in data/worlds (lodhi, munnar, ...) or a world JSON")
+    parser.add_argument("--start", help="Where it takes off: a landmark name, or x,y.")
+    parser.add_argument("--land", help="Where it finishes: a landmark name, x,y, or 'start'.")
     parser.add_argument("--wind", help="Steady wind as 'x,y,z' in m/s.")
     parser.add_argument("--turbulence", type=float, default=0.0)
-    parser.add_argument("--faults", default="none", help="'sample', 'none', or a schedule JSON.")
-    parser.add_argument("--retries", type=int, default=2, help="Corrections to ask for.")
+    parser.add_argument("--faults", default="none",
+                        help="none, crane_ahead, storm, gps_slip, or a schedule JSON.")
+    parser.add_argument("--max-attempts", type=int, default=3,
+                        help="Corrections to ask for after each verifier rejection.")
+    parser.add_argument("--max-replans", type=int, default=3,
+                        help="In-flight replans allowed before landing where it is.")
     parser.add_argument("--max-altitude", type=float)
-    parser.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    parser.add_argument("--runs-dir", type=Path, default=RUNS_DIR)
     parser.add_argument("--speed", type=float, default=1.0, help="Gazebo playback speed.")
     parser.add_argument("--no-watch", action="store_true",
                         help="Write the run file but do not open Gazebo on it.")
@@ -204,30 +222,21 @@ def main(argv: list[str]) -> int:
                         help="Open Gazebo on the world before the first mission.")
     args = parser.parse_args(argv)
 
-    constraints = DEFAULT_CONSTRAINTS
-    if args.max_altitude:
-        constraints = constraints.model_copy(update={"max_altitude": args.max_altitude})
-    live = Live(
-        world=None,
-        constraints=constraints,
-        config=SimConfig(),
-        wind=parse_wind(args.wind, args.turbulence),
-        faults=load_faults(args.faults, Plan()),
-        retries=args.retries,
-    )
-    live.use_world(load_world(args.world))
-
-    def look() -> None:
-        """Gazebo on the current world, nothing flying: somewhere to look around."""
-        if not live.world:
-            print("  no world to look at: open space above a flat plane")
-            return
-        watch({"world": live.world.model_dump(mode="json")}, args.speed, live.world.name)
-
-    describe(live.world)
-    print("tell it what to do, and it flies in Gazebo. /help for commands.\n")
+    session = Session(args)
+    session.use_world(load_world(args.world))
+    try:
+        if args.start:
+            session.set_start(args.start)
+        if args.land:
+            session.set_landing(args.land)
+    except ValueError as exc:
+        print(f"  {exc}", file=sys.stderr)
+        return 2
+    print(RULE)
+    session.show_pads()
+    print("\n/look to see it, /start and /land to move the pads, then type a mission. /help for more.\n")
     if args.look:
-        look()
+        session.look()
 
     last = ""
     try:
@@ -238,52 +247,48 @@ def main(argv: list[str]) -> int:
                 break
             if not line:
                 continue
-
-            if line in ("/quit", "/exit", "/q"):
-                break
-            if line == "/help":
-                print(HELP)
-                continue
-            if line == "/look":
-                look()
-                continue
-            if line.startswith("/world "):
-                try:
-                    live.use_world(load_world(line.split(maxsplit=1)[1]))
-                except (OSError, ValueError) as exc:
-                    print(f"  could not load that world: {exc}")
-                    continue
-                describe(live.world)
-                continue
-            if line == "/worlds":
-                for name in world_names():
-                    print(f"  {name}")
-                continue
-            if line.startswith("/wind "):
-                live.wind = parse_wind(line.split(maxsplit=1)[1], args.turbulence)
-                print(f"  wind is now {live.wind.vector} m/s")
-                continue
-            if line.startswith("/faults "):
-                live.faults = load_faults(line.split(maxsplit=1)[1], Plan())
-                print(f"  {len(live.faults)} fault(s) armed")
-                continue
-            if line.startswith("/retries "):
-                live.retries = int(line.split()[1])
-                print(f"  will ask for up to {live.retries} correction(s)")
-                continue
-            if line == "/again":
-                if not last:
-                    print("  nothing flown yet")
-                    continue
-                line = last
-            elif line.startswith("/"):
-                print(f"  unknown command. {HELP}")
-                continue
-
-            last = line
-            run_file = fly(line, live, args.runs_dir)
-            if run_file and not args.no_watch:
-                watch(read_run(run_file), args.speed, run_file.name)
+            command, _, rest = line.partition(" ")
+            rest = rest.strip()
+            try:
+                if command in ("/quit", "/exit", "/q"):
+                    break
+                elif command == "/help":
+                    print(HELP)
+                elif command == "/look":
+                    session.look()
+                elif command == "/landmarks":
+                    describe_world(session.world)
+                elif command == "/start" and rest:
+                    session.set_start(rest)
+                elif command in ("/land", "/landing") and rest:
+                    session.set_landing(rest)
+                elif command == "/pads":
+                    session.show_pads()
+                elif command == "/world" and rest:
+                    session.use_world(load_world(rest))
+                    session.show_pads()
+                elif command == "/worlds":
+                    for name in world_names():
+                        print(f"  {name}")
+                elif command == "/wind" and rest:
+                    session.wind = parse_wind(rest, args.turbulence)
+                    print(f"  wind is now {session.wind.vector} m/s")
+                elif command == "/faults" and rest:
+                    load_faults(rest, Plan())  # fail now, not after planning
+                    session.faults = rest
+                    print(f"  faults: {rest}")
+                elif command == "/again":
+                    if not last:
+                        print("  nothing flown yet")
+                    else:
+                        session.fly(last)
+                elif line.startswith("/"):
+                    print(f"  not a command, or it needs an argument. {HELP}")
+                else:
+                    last = line
+                    session.fly(line)
+            except (ValueError, OSError) as exc:
+                print(f"  {exc}")
     except KeyboardInterrupt:
         pass
     finally:

@@ -18,7 +18,6 @@ which `scripts/gazebo_view.py` replays.
 from __future__ import annotations
 
 import argparse
-import json
 import logging
 import sys
 from pathlib import Path
@@ -28,83 +27,27 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from planner import (  # noqa: E402
+from waypoint.planner import (  # noqa: E402
     DEFAULT_CONSTRAINTS,
-    GeoPoint,
     MissionConstraints,
-    Obstacle,
     Plan,
     PlannerError,
     plan as make_plan,
 )
-from orchestrator.loop import MissionReport, format_state  # noqa: E402
-from orchestrator.runlog import write_run  # noqa: E402
-from sim import (  # noqa: E402
-    Executor,
-    FaultEvent,
-    FaultSchedule,
-    FaultType,
-    SimConfig,
-    Trigger,
-    Wind,
+from waypoint.orchestrator.loop import MissionReport, format_state  # noqa: E402
+from waypoint.orchestrator.runlog import write_run  # noqa: E402
+from waypoint.paths import RUNS_DIR  # noqa: E402
+from waypoint.scenario import (  # noqa: E402
+    fence_around,
+    load_faults,
+    load_plan,
+    load_world,
+    parse_wind,
 )
-from verifier import verify  # noqa: E402
-from world.models import World  # noqa: E402
+from waypoint.sim import Executor, SimConfig  # noqa: E402
+from waypoint.verifier import verify  # noqa: E402
 
 RULE = "=" * 78
-
-
-def sample_schedule(plan: Plan) -> FaultSchedule:
-    """A demo schedule aimed at whatever plan we were given.
-
-    Two faults fire on the clock and two on flight conditions, so a run
-    exercises both kinds of trigger.
-    """
-    waypoints = plan.waypoints()
-    midpoint = waypoints[len(waypoints) // 2] if waypoints else None
-    turn = max(1, len(waypoints) // 2)
-
-    events = [
-        FaultEvent(
-            type=FaultType.WIND_GUST,
-            trigger=Trigger(time=12.0),
-            magnitude=9.0,
-            direction=90.0,
-            duration=6.0,
-            name="squall",
-        ),
-        FaultEvent(
-            type=FaultType.BATTERY_DRAIN_SPIKE,
-            trigger=Trigger(battery_below=97.0),
-            magnitude=0.8,
-            duration=15.0,
-            name="cell fault",
-        ),
-        FaultEvent(
-            type=FaultType.GPS_DRIFT,
-            trigger=Trigger(at_waypoint=turn),
-            magnitude=0.6,
-            direction=200.0,
-            duration=18.0,
-            name="gps slip",
-        ),
-    ]
-    if midpoint is not None:
-        events.append(
-            FaultEvent(
-                type=FaultType.OBSTACLE_APPEARS,
-                trigger=Trigger(at_waypoint=max(1, turn - 1)),
-                obstacle=Obstacle(
-                    x=midpoint.x * 0.6,
-                    y=midpoint.y * 0.6,
-                    radius=10.0,
-                    height=40.0,
-                    name="mobile crane",
-                ),
-                name="crane spotted",
-            )
-        )
-    return FaultSchedule(events=events)
 
 
 def indent(text: str, prefix: str = "    ") -> str:
@@ -132,23 +75,6 @@ def show_plan(plan: Plan, from_file: Path | None) -> None:
     print(f"\n  {len(plan.subtasks)} subtask(s), {total} waypoint(s)")
 
 
-def load_faults(spec: str, plan: Plan) -> FaultSchedule:
-    if spec == "none":
-        return FaultSchedule()
-    if spec == "sample":
-        return sample_schedule(plan)
-    return FaultSchedule.model_validate_json(Path(spec).read_text())
-
-
-def parse_wind(spec: str | None, turbulence: float) -> Wind:
-    if not spec:
-        return Wind(turbulence=turbulence)
-    parts = [float(value) for value in spec.split(",")]
-    while len(parts) < 3:
-        parts.append(0.0)
-    return Wind(vector=(parts[0], parts[1], parts[2]), turbulence=turbulence)
-
-
 def python_command() -> str:
     """How to invoke this interpreter from the project directory.
 
@@ -161,48 +87,16 @@ def python_command() -> str:
     except ValueError:
         return str(exe)
 
-def load_world(spec: str | None) -> World | None:
-    """A built-in world by name, or a path to one from scripts/make_world.py.
-
-    The names are the keys of `world.generate.BUILDERS` -- `delhi`, `lodhi`,
-    `chowk`, `munnar`, and the older `city`/`park`/`canyon`/`hills` aliases.
-    """
-    if not spec or spec == "none":
-        return None
-    from world.generate import BUILDERS, build  # noqa: PLC0415
-
-    if spec in BUILDERS:
-        return build(spec)
-    return World.model_validate_json(Path(spec).read_text())
-
-
-def fence_around(world: World, margin: float = 20.0) -> list[GeoPoint]:
-    """A geofence that contains the whole world, inset by a margin."""
-    minx, miny, maxx, maxy = world.bounds
-    return [
-        GeoPoint(x=minx + margin, y=miny + margin),
-        GeoPoint(x=maxx - margin, y=miny + margin),
-        GeoPoint(x=maxx - margin, y=maxy - margin),
-        GeoPoint(x=minx + margin, y=maxy - margin),
-    ]
-
-
-def load_plan(path: Path) -> Plan:
-    payload = json.loads(path.read_text())
-    if "subtasks" not in payload:
-        raise ValueError(f"{path} does not hold a Plan (no 'subtasks' key)")
-    return Plan.model_validate(payload)
-
-
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("mission", nargs="?", help="Mission text to plan with the live API.")
-    parser.add_argument("--plan", type=Path, help="Fly this saved plan JSON instead.")
+    parser.add_argument("--plan", help="Fly a saved plan: a name in data/plans, or a JSON path.")
     parser.add_argument("--save", type=Path, help="Write the generated plan here to re-fly later.")
-    parser.add_argument("--faults", default="sample", help="'sample', 'none', or a schedule JSON.")
+    parser.add_argument("--faults", default="sample",
+                        help="'sample', 'none', a name in data/faults, or a schedule JSON.")
     parser.add_argument(
         "--world",
-        help="Environment: 'delhi', 'lodhi', 'chowk', 'munnar', or a worlds/*.json file.",
+        help="Environment: a name in data/worlds ('lodhi', 'munnar', ...) or a world JSON.",
     )
     parser.add_argument(
         "--keep-geofence",
@@ -216,7 +110,7 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--turbulence", type=float, default=0.0, help="Gustiness std-dev, m/s.")
     parser.add_argument("--dt", type=float, default=0.1, help="Tick length in seconds.")
     parser.add_argument("--blind", action="store_true", help="No wind compensation: fly blind.")
-    parser.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    parser.add_argument("--runs-dir", type=Path, default=RUNS_DIR)
     parser.add_argument("--quiet", action="store_true", help="Suppress per-second telemetry.")
     parser.add_argument("--force", action="store_true", help="Fly even if verification fails.")
     parser.add_argument("--gazebo", action="store_true", help="Watch this run fly in Gazebo.")
@@ -323,8 +217,8 @@ def main(argv: list[str]) -> int:
     print(f"\n  run written to {report.run_file}")
 
     if args.gazebo:
-        from gazebo.launch import GazeboError, play  # noqa: PLC0415 -- optional path
-        from orchestrator.runlog import read_run  # noqa: PLC0415
+        from waypoint.gazebo.launch import GazeboError, play  # noqa: PLC0415 -- optional path
+        from waypoint.orchestrator.runlog import read_run  # noqa: PLC0415
 
         try:
             return play(read_run(report.run_file), speed=args.speed)

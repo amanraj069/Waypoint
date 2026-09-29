@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from shapely.affinity import scale  # noqa: E402
 from shapely.geometry import Polygon  # noqa: E402
 
-from planner import (  # noqa: E402
+from waypoint.planner import (  # noqa: E402
     DEFAULT_CONSTRAINTS,
     GeoPoint,
     MissionConstraints,
@@ -39,7 +39,7 @@ from planner import (  # noqa: E402
     PlannerError,
     plan as make_plan,
 )
-from verifier import DEFAULT_CONFIG, VerificationResult, verify  # noqa: E402
+from waypoint.verifier import DEFAULT_CONFIG, VerificationResult, verify  # noqa: E402
 
 RULE = "=" * 78
 
