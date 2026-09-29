@@ -7,23 +7,23 @@ import re
 import pytest
 
 from conftest import fake_planner
-from orchestrator import run_mission
-from orchestrator.plotting import ACTION_STYLE, build_figure, html_path_for, render
-from orchestrator.runlog import build_run
+from waypoint.orchestrator import run_mission
+from waypoint.orchestrator.plotting import ACTION_STYLE, build_figure, html_path_for, render
+from waypoint.orchestrator.runlog import build_run
 
 
 @pytest.fixture
 def run(tmp_path):
     report = run_mission(
         "survey the north field", verbose=False, planner=fake_planner, runs_dir=tmp_path
-    )
+    ).report
     return build_run(report)
 
 
 @pytest.fixture
 def no_browser(monkeypatch):
     opened = []
-    monkeypatch.setattr("orchestrator.plotting.webbrowser.open", opened.append)
+    monkeypatch.setattr("waypoint.orchestrator.plotting.webbrowser.open", opened.append)
     return opened
 
 

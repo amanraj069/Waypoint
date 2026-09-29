@@ -3,8 +3,8 @@
 **Safety-Aware Hierarchical LLM for Autonomous UAV Mission Planning and
 Adaptation**. Say a mission in plain English, watch a language model decompose
 it, a deterministic verifier check it, and a simulator fly it through a real
-place. The planner, the verifier and the simulator are real; only the feedback
-layer is still mocked.
+place, replanning in the air when something gets in the way. The planner, the
+verifier, the simulator and the in-flight feedback are all real.
 
 ```
 natural language mission
@@ -12,8 +12,8 @@ natural language mission
         -> planner    (LLM hierarchical planner)   [REAL: Gemini, strict JSON response schema]
         -> verifier   (deterministic safety check) [REAL: shapely geometry, no model in the loop]
         -> sim        (UAV executor)               [REAL: point-mass physics, wind, faults, collisions]
-        -> feedback   (telemetry / perception)     [stub: never requests a replan]
-        -> replan loop back into planner           [wired: a rejected plan goes back with the reasons]
+        -> feedback   (in-flight monitor)          [REAL: new obstacle on the route, battery short]
+        -> replan loop back into planner           [REAL: on the ground after a rejection, in the air from where it is]
 ```
 
 There are two ways in. **The prompt** opens a place, takes a mission in plain
@@ -30,20 +30,45 @@ world and the flight is replayed in it.
 
 ## Layout
 
-| Path            | Role |
-| --------------- | ---- |
-| `world/`        | `World`, `Terrain`, `Building`; procedural cities and an OpenStreetMap importer |
-| `planner/`      | `plan()` / `replan()` against Gemini; `Waypoint`, `SubTask`, `Plan`, `Action`, `MissionConstraints` |
-| `verifier/`     | `verify(plan, constraints) -> VerificationResult` (`passed`, `violations`); the checks live in `verifier/checks.py` |
-| `sim/`          | `UAVState`, `Executor`, point-mass `dynamics`, `Wind`, `FaultSchedule`; `execute(plan)` yields a state per 0.1 s tick |
-| `feedback/`     | `observe(state) -> Feedback` (`replan_required`, `reasons`) |
-| `orchestrator/` | `run_mission(mission_text)` and the `python -m orchestrator.run` CLI |
-| `tests/`        | pytest suite, one module per component |
-| `examples/`     | ready-to-fly plans and a fault schedule, so the demo needs no API key |
-| `worlds/`       | saved environments built by `scripts/make_world.py` |
-| `experiments/`  | scratch scenarios and logged runs |
-| `api/`          | FastAPI over the pipeline: worlds, missions (streamed as they happen), runs |
-| `gazebo/`       | Gazebo as the 3D view: a run becomes an SDF world, and the flight is replayed in it |
+```
+waypoint/                 the repository
+├── waypoint/             all the code, one importable package
+│   ├── world/            where it flies: terrain, buildings, landmarks
+│   ├── planner/          English -> hierarchical Plan, via Gemini
+│   ├── verifier/         deterministic safety check of a Plan
+│   ├── sim/              point-mass physics, wind, fault injection
+│   ├── feedback/         the in-flight monitor: needs_replan(), summarize_for_llm()
+│   ├── orchestrator/     the closed loop, its MissionLog, the CLI, run files
+│   ├── backends.py       ExecutorBackend: all the loop may ask of what flies
+│   ├── gazebo/           a run as a Gazebo world, the flight replayed in it
+│   ├── api/              the same pipeline over HTTP
+│   ├── scenario.py       short specs ("lodhi", "sample", "4,0,0") -> inputs
+│   └── paths.py          where data, worlds and runs live on disk
+├── scripts/              the commands you run
+├── data/
+│   ├── worlds/           saved environments, one JSON per place
+│   ├── plans/            verified plans that fly without an API key
+│   └── faults/           fault schedules to replay
+├── runs/                 every flight flown (gitignored)
+└── tests/                pytest suite, one module per component
+```
+
+| Package | What to reach for |
+| --- | --- |
+| `waypoint.world` | `World`, `Terrain`, `Building`; procedural cities and an OpenStreetMap importer |
+| `waypoint.planner` | `plan()` / `replan()` against Gemini; `Waypoint`, `SubTask`, `Plan`, `Action`, `MissionConstraints` |
+| `waypoint.verifier` | `verify(plan, constraints) -> VerificationResult` (`passed`, `violations`); the checks live in `verifier/checks.py` |
+| `waypoint.sim` | `UAVState`, `Executor`, point-mass `dynamics`, `Wind`, `FaultSchedule`; `execute(plan)` yields a state per 0.1 s tick |
+| `waypoint.backends` | `ExecutorBackend` (`prepare`, `run(plan)`, ...) and `make_backend("custom")`; `px4` is reserved |
+| `waypoint.feedback` | `needs_replan(snapshot) -> ReplanTrigger | None`, `summarize_for_llm(snapshot, trigger)` |
+| `waypoint.orchestrator` | `run_mission(mission, constraints, faults, backend) -> MissionLog` and the `run_full` CLI |
+| `waypoint.gazebo` | `write_scene(run)` and `play(run)`: the 3D view |
+| `waypoint.api` | FastAPI over the pipeline: worlds, missions (streamed as they happen), runs |
+
+Every path in the code comes from `waypoint/paths.py`, so a command behaves the
+same whichever directory you run it from. Bundled plans, fault schedules and
+worlds can be named rather than spelled out: `--plan lodhi_garden_tour`,
+`--faults storm`, `--world gateway_of_india`.
 
 ## Configuration
 
@@ -79,7 +104,7 @@ Gazebo's Python bindings are built for Homebrew's Python rather than the
 project's, so the one process that talks to Gazebo runs in that small side
 environment; everything else runs in `.venv`. If you only want the CLI,
 `".[dev]"` is enough; `api` is just FastAPI and uvicorn, and nothing outside
-`api/` imports them. A Gemini key is only
+`waypoint/api/` imports them. A Gemini key is only
 required to *plan* a new mission; flying and replaying work without one:
 
 ```bash
@@ -112,7 +137,7 @@ not have the dependencies.
 One command flies a bundled plan through the simulator and opens Gazebo on it:
 
 ```bash
-python scripts/simulate.py --plan examples/plans/munnar_ridge_run.json \
+python scripts/simulate.py --plan data/plans/munnar_ridge_run.json \
     --world munnar --gazebo
 ```
 
@@ -137,7 +162,7 @@ python scripts/gazebo_view.py --latest --headless
 ```
 
 The launcher starts the gz server and the GUI as separate processes (on macOS
-they cannot share one) plus `gazebo/bridge.py`, which is the only code that
+they cannot share one) plus `waypoint/gazebo/bridge.py`, which is the only code that
 speaks gz-transport. The scene is written to
 `~/.cache/waypoint/gazebo/<mission>/`, because SDF mesh URIs do not survive the
 spaces in a path like `VS Code/`.
@@ -166,77 +191,57 @@ curl -X POST localhost:8000/api/missions -H 'content-type: application/json' \
 curl -N localhost:8000/api/missions/m1-49e180/events
 ```
 
-### 1. Look around, then just say what you want, at a prompt
+### 1. Look, choose the pads, say what to do (needs a Gemini key)
 
-The quickest way in. It tells you what is in the place and what you can name,
-then you type missions at a prompt and each one opens in Gazebo when it is
-flown. Close the window and you are back at the prompt, ready for the next one.
+The whole thing, from one prompt:
 
 ```bash
-.venv/bin/python scripts/explore.py --world lodhi          # named places to point at
-.venv/bin/python scripts/explore.py --world munnar         # open country
-.venv/bin/python scripts/explore.py --world worlds/gateway_of_india.json
-.venv/bin/python scripts/explore.py --world chowk --wind 4,0,0 --faults sample
+.venv/bin/python scripts/explore.py --world munnar
 ```
 
-Lodhi Garden is the one to start with, because everything in it has a name:
+It prints the place, its size and every named landmark, then waits. Three steps:
 
 ```
-mission> photograph Bara Gumbad from two sides, then fly north up the ashoka
-         avenue and make a low pass over the lake, then come home
-
-  1. takeoff                [0] (0, 0, 25) MOVE
-  2. fly_ashoka_avenue      [1] (0, 90, 25)    [2] (0, 170, 25)
-  3. photograph_bara_gumbad [3] (5, 185, 25) CAPTURE   [4] (35, 215, 25) CAPTURE
-  4. low_pass_lake          [5] (115, 310, 15)  [6] (115, 360, 8) CAPTURE ...
-  169s | 933 m flown | 74.0% battery left | landed
+mission> /look                             1. Gazebo opens on the world, pads marked
+                                              (close the window to come back)
+mission> /start the Kanan Devan tea estate 2. where it takes off: a landmark, or x,y
+  start: the Kanan Devan tea estate (-202.6, -97.4), ground at 43.5 m;
+         moved 32 m to the nearest flat, clear ground
+mission> /land Echo Point                     and where it finishes (default: the start)
+  landing: Echo Point (263.0, 112.9), ground at 67.2 m; moved 96 m ...
+mission> /look                                look again: green pad start, amber pad landing
+mission> photograph the Tata Tea Museum from above, then fly over Munnar town
+         and land at the landing pad       3. the mission, in plain English
 ```
 
-It flanked the 22 m tomb to get two angles, ran the avenue at 25 m (over the
-16 m ashokas, not between them) and dropped to 8 m for the water.
+The mission then runs through the closed loop (see [5b](#5b-the-closed-loop-replan-in-the-air-needs-a-gemini-key)):
+Gemini plans it from your start pad to your landing pad, the verifier checks it
+(and asks for corrections if it fails), the simulator flies it, the monitor
+replans in the air if something gets in the way, and Gazebo opens on the
+finished flight. Close the window and type the next mission.
 
-```
-central vista (procedural): 380 obstacles (240 trees), tallest roof 80 m, ground -0..26 m
-tell it what to do, and it flies in Gazebo. /help for commands.
-
-mission> climb over the Secretariat and photograph Rashtrapati Bhavan from the east, then come home
-
-planning...
-  1. takeoff              [0] (0, 0, 35) at 3 m/s MOVE
-  2. transit_up_the_vista [1] (-200, 0, 55) ...
-  3. photograph_rashtrapati_bhavan  [3] (-455, 0, 95) CAPTURE ...
-  verification passed
-
-flying...
-  runs/climb-over-the-secretariat_20260920T101500.json
-  opening Gazebo on climb-over-the-secretariat_20260920T101500.json
-```
-
-Gazebo opens on the finished flight and plays it. Close the window and type
-another mission, and it does the whole thing again. `--no-watch` writes the run
-without opening anything; `--speed` sets the playback rate; `/look` opens the
-world on its own, with nothing flying in it.
-
-Note the altitude the planner chose: 95 m, to clear a 42 m building standing
-on ground that has itself climbed 24 m up Raisina Hill. It reads the terrain
-and the structures out of the world description before it commits to a route.
-
-If the verifier rejects a plan, `explore.py` feeds the violations straight back
-to the planner and asks for a correction (`--retries`, 2 by default) before
-giving up. That is the replan loop closing: the model proposes, the deterministic
-checker disposes, and the reasons are specific enough to fix.
+Pads are surveyed rather than assumed: a point on a slope, in water or inside a
+building moves to the nearest flat, clear ground within 120 m, and it says how
+far. A point outside the geofence, or a landmark name that matches nothing (or
+more than one thing), is refused with the reason. Everything can be set up
+front instead: `--start`, `--land`, `--faults crane_ahead`, `--wind 3,0,0`.
 
 | At the prompt | |
 | --- | --- |
+| `/look` | Gazebo on the world, pads marked, nothing flying |
+| `/landmarks` | the named places, with their coordinates |
+| `/start <where>` | launch pad: a landmark name (or part of one), or `x,y` in metres |
+| `/land <where>` | landing pad: a landmark, `x,y`, or `start` for back where it began |
+| `/pads` | show both |
 | *anything else* | a mission, in plain English |
-| `/look` | open Gazebo on the world, with nothing flying in it |
-| `/world <spec>` | switch worlds: `delhi`, `lodhi`, `chowk`, `munnar`, or a `worlds/*.json` |
-| `/worlds` | list the worlds you can switch to |
-| `/wind x,y,z` | set the steady wind in m/s |
-| `/faults <spec>` | `sample`, `none`, or a schedule JSON |
-| `/retries <n>` | corrections to ask for after a rejection |
-| `/again` | re-fly the last mission |
+| `/again` | fly the last mission again |
+| `/world <name>` | switch places (resets the pads); `/worlds` lists them |
+| `/wind x,y,z` | steady wind in m/s |
+| `/faults <spec>` | `none`, `crane_ahead`, `storm`, `gps_slip`, or a schedule JSON |
 | `/help` `/quit` | |
+
+Coordinates are metres from the world's origin: x east, y north. The world's
+extent is printed when it loads.
 
 ### 2. Replay a past run
 
@@ -267,22 +272,22 @@ python scripts/gazebo_view.py --latest --headless
 
 ```bash
 # fly through a real place instead of empty space
-python scripts/simulate.py --plan examples/plans/lodhi_garden_tour.json --world lodhi
+python scripts/simulate.py --plan data/plans/lodhi_garden_tour.json --world lodhi
 
 # steady 4 m/s easterly with gusty air
-python scripts/simulate.py --plan examples/plans/north_field_and_tower.json \
+python scripts/simulate.py --plan data/plans/north_field_and_tower.json \
     --wind 4,0,0 --turbulence 0.8
 
 # no wind estimation: the aircraft cannot feel the wind and gets blown off course
-python scripts/simulate.py --plan examples/plans/north_field_and_tower.json \
+python scripts/simulate.py --plan data/plans/north_field_and_tower.json \
     --wind 2,0,0 --blind
 
 # a clean reference flight, no faults at all
-python scripts/simulate.py --plan examples/plans/north_field_and_tower.json --faults none
+python scripts/simulate.py --plan data/plans/north_field_and_tower.json --faults none
 ```
 
 `--faults` takes `sample` (the built-in demo schedule, the default), `none`, or
-a path to a schedule JSON; copy `examples/faults/storm.json` and edit it. Other
+a path to a schedule JSON; copy `data/faults/storm.json` and edit it. Other
 flags: `--dt` for tick length, `--runs-dir`, `--quiet`, `--force` to fly a plan
 that failed verification.
 
@@ -303,8 +308,8 @@ and Gazebo animates the result.
 python scripts/simulate.py \
     "inspect the three wind turbines along the ridge 120 m north of base, \
      photograph each one from two angles, then come home" \
-    --save examples/plans/wind_turbines.json \
-    --serve
+    --save data/plans/wind_turbines.json \
+    --gazebo
 ```
 
 The terminal shows the decomposition before anything flies:
@@ -330,28 +335,86 @@ as often as you like (different wind, different faults) without spending
 another token:
 
 ```bash
-python scripts/simulate.py --plan examples/plans/wind_turbines.json --wind 5,0,0 --serve
+python scripts/simulate.py --plan data/plans/wind_turbines.json --wind 5,0,0 --gazebo
 ```
 
 The verifier runs on the model's output either way. If the plan breaks the
 envelope the flight is refused and the report says which waypoint and why, which
 is the point of having a deterministic gate between the LLM and the aircraft.
 
-Or run the orchestrator loop, which prints each stage and writes a run file:
+Or run the closed loop, which is the next section.
+
+### 5b. The closed loop: replan in the air (needs a Gemini key)
 
 ```bash
-python -m orchestrator.run --mission "survey the north field"
-python -m orchestrator.run --mission "survey the north field" --plot   # plotly 3D
+python -m waypoint.orchestrator.run_full \
+    --mission "survey the north field: photograph the corners of the field 80 m north of base, then come home and land" \
+    --faults crane_ahead --gazebo
 ```
 
-Exits 0 when the mission ends landed and stationary. `--quiet` suppresses
-per-tick telemetry.
+`crane_ahead` puts a 60 m crane 35 m up the route, wherever the route goes, as
+the aircraft heads for its third waypoint. The console follows every phase:
+
+```
+==> PLANNING  ...
+==> VERIFYING  plan 0
+    passed
+==> EXECUTING  plan 0
+    t=   17.1s  FAULT          crane spotted: 'mobile crane' appears 35 m ahead on the route, radius 8 m
+==> REPLAN TRIGGERED  t=17.2s  'mobile crane' appeared at (-21.27, 95), radius 8 m, 60 m tall;
+                      the route passes 3.7 m from it, inside its 8 m keep-out
+==> REPLANNING  from (-24.6, 64.0, 20.0) with 97.5% battery
+      [0] (-30, 95, 20) @ 3 m/s  CAPTURE      <- the corner photo, moved clear of the crane
+      [1] (-30, 105, 20) @ 5 m/s  MOVE        <- round the north side of it
+      ...
+==> VERIFYING  plan 1
+    passed
+==> RESUMING  plan 1
+==> MISSION COMPLETE  landed after 78.7s, 316 m, 90.8% battery, 1 in-flight replan(s)
+```
+
+That is a real run. `--gazebo` then opens it: the crane appears at t=17 s, the
+new route appears beside the old one at the same moment (cyan; the one it
+replaced stays grey), and the trail shows the aircraft follow it round.
+
+What the loop does, and where it is written down:
+
+- **On the ground**, a plan the verifier rejects goes back to the planner with
+  the reasons, up to `--max-attempts` times (3).
+- **In the air**, the feedback monitor looks at every tick (`--check-every`). If
+  something appeared that the plan was not verified against and the rest of the
+  route passes through its keep-out, or the battery left will not cover the rest
+  of the route plus a reserve, the flight pauses. The planner gets the situation
+  (`summarize_for_llm`: where it is, what is done, what is left, why) and plans
+  the rest *from where it is*; that plan gets its own verify-and-correct loop,
+  against the new obstacle and the battery budget that is left, then flying
+  resumes on the same backend.
+- **Hard stops**: more than `--max-replans` (3) interruptions, a replacement that
+  never passes, or no battery budget left, and it lands where it is (`failsafe`).
+  A flat battery or a crash ends the mission too.
+
+Two files land in `runs/`: the run file Gazebo replays (with every plan that
+flew, under `plans`), and the mission log, `<run>.log.jsonl`, one decision per
+line: `mission_started`, `plan_proposed`, `verification`, `execution_started`,
+`replan_triggered`, `execution_resumed`, `failsafe`, `mission_finished`. It
+records the backend, so runs from different backends can be compared:
+
+```bash
+jq -c '{kind, source, passed, trigger, outcome}' runs/*.log.jsonl
+```
+
+`--backend custom` is the default; `--backend px4` is reserved for PX4 SITL with
+Gazebo as its physics and says so. The loop only ever calls `ExecutorBackend`,
+so that backend is a new class in `waypoint/backends.py`, not a change to the
+loop. `--plan lodhi_garden_tour` starts from a saved plan instead of the
+planner (replans in the air still use it). Exits 0 when the mission completes.
+`python -m waypoint.orchestrator.run` is the same command by its older name.
 
 ### 6. Exercise one stage at a time
 
 ```bash
 python scripts/try_planner.py "survey the north field"          # planner only (spends tokens)
-python scripts/try_verifier.py --plan examples/plans/north_field_and_tower.json \
+python scripts/try_verifier.py --plan data/plans/north_field_and_tower.json \
     --shrink 0.3 --hazards                                      # verifier only, no tokens
 ```
 
@@ -359,7 +422,7 @@ python scripts/try_verifier.py --plan examples/plans/north_field_and_tower.json 
 
 | Symptom | Fix |
 | --- | --- |
-| `No run files with telemetry in runs/` | Fly one first: `python scripts/simulate.py --plan examples/plans/north_field_and_tower.json` |
+| `No run files with telemetry in runs/` | Fly one first: `python scripts/simulate.py --plan data/plans/north_field_and_tower.json` |
 | `` `gz` is not on PATH `` | Install Gazebo: `brew install gz-jetty` (or any gz-sim >= Harmonic) |
 | `zsh: command not found: python` | macOS has no bare `python`; use `.venv/bin/python`, or `source .venv/bin/activate` first |
 | `ModuleNotFoundError: shapely` (or `pydantic`) | You are on a system `python3`; use `.venv/bin/python` |
@@ -390,7 +453,7 @@ with the rejected plan and the verifier's exact reasons, for the feedback loop.
 
 Gemini models go through spells of overload (`500 ... experiencing high demand`)
 and free-tier quota limits. Rather than failing the mission, the planner shifts
-down `planner/config.py:MODEL_LADDER`:
+down `waypoint/planner/config.py:MODEL_LADDER`:
 
 ```
 gemini-3.6-flash -> gemini-3.5-flash -> gemini-3.7-flash -> gemini-2.5-flash -> gemini-2.5-flash-lite
@@ -549,7 +612,7 @@ through the address to the building type (`12 Colaba Causeway`, `apartments 7`,
 `unnamed block 213`) and promotes the named, notable ones to landmarks, so a
 place nobody hand-authored still has things a mission can refer to by name.
 
-Worlds are saved to `worlds/<name>.json` and embedded in each run file, so a
+Worlds are saved to `data/worlds/<name>.json` and embedded in each run file, so a
 replay never has to rebuild or re-download anything.
 
 **Altitude means height above the launch pad**, not height above whatever is
@@ -564,15 +627,15 @@ Procedural terrain is levelled so the pad sits at zero.
 | Planner | The prompt describes the relief and the tallest roofs, so it plans over or around them |
 | Verifier | Two new checks: `BUILDING` (a waypoint inside one, or a leg that flies through one) and `TERRAIN` (underground, or below the ground-clearance minimum, including legs that fly into a hillside between two clear waypoints) |
 | Simulator | The aircraft can hit things. A `COLLISION` event ends the flight, and `report.completed` is False |
-| Pads | Where the aircraft may stand is surveyed, not assumed: no steeper than 8°, and no more than 0.9 m of rise and fall across its 6 m footprint (`world/landing.py`) |
+| Pads | Where the aircraft may stand is surveyed, not assumed: no steeper than 8°, and no more than 0.9 m of rise and fall across its 6 m footprint (`waypoint/world/landing.py`) |
 | Telemetry | Every tick carries `ground` and `agl` alongside `z` |
 | Viewer | The grid is replaced by the real terrain mesh and extruded buildings |
 
 The interesting case is the one the verifier cannot save you from:
 
 ```bash
-python scripts/simulate.py --plan examples/plans/chandni_chowk_run.json --world chowk \
-    --faults examples/faults/gps_slip.json
+python scripts/simulate.py --plan data/plans/chandni_chowk_run.json --world chowk \
+    --faults data/faults/gps_slip.json
 ```
 
 ```
@@ -589,14 +652,14 @@ in empty space.
 
 ### Flying a real place
 
-`worlds/gateway_of_india.json` ships with the project: 118 real footprints from
+`data/worlds/gateway_of_india.json` ships with the project: 118 real footprints from
 OpenStreetMap around Colaba, Mumbai, 80 of them carrying the name their mapper
 gave them: the Taj Mahal Palace, the Royal Bombay Yacht Club, Regal Cinema,
 Dhanraj Mahal, the Gateway of India itself. Build another anywhere:
 
 ```bash
 python scripts/make_world.py osm --lat 28.6129 --lon 77.2295 --radius 400 --name india_gate
-.venv/bin/python scripts/explore.py --world worlds/india_gate.json
+.venv/bin/python scripts/explore.py --world data/worlds/india_gate.json
 ```
 
 The trade is accuracy for completeness: the footprints are survey-accurate and
@@ -688,7 +751,7 @@ python scripts/simulate.py --plan /tmp/plan.json --faults my_scenario.json
 
 ## The 3D view
 
-Gazebo draws every run, and `gazebo/scene.py` is what turns a run file into
+Gazebo draws every run, and `waypoint/gazebo/scene.py` is what turns a run file into
 something it can open. Two files come out, into
 `~/.cache/waypoint/gazebo/<mission>/`:
 
@@ -706,7 +769,7 @@ lawn, water, road, forest. Normals come from the height field's own slope, so
 hills are lit like hills. Cells are written as quads, which Gazebo triangulates
 on load: the same mesh from half as many lines of OBJ.
 
-`gazebo/bridge.py` is the only code that speaks gz-transport, and it runs under
+`waypoint/gazebo/bridge.py` is the only code that speaks gz-transport, and it runs under
 Homebrew's Python because that is what Gazebo's bindings are built for. The
 launcher feeds it one JSON command per line over a pipe: a pose 30 times a
 second (interpolated between the simulator's 10 Hz ticks so the aircraft moves
@@ -721,7 +784,7 @@ past flight replays without re-simulating.
 ## Test
 
 ```bash
-.venv/bin/python -m pytest          # 287 tests, about 4 seconds
+.venv/bin/python -m pytest          # 311 tests, about 4 seconds
 ```
 
 Every test mocks the Gemini client; an autouse fixture replaces the real
@@ -732,25 +795,27 @@ run files are covered without a key and without a network.
 
 ## Where the real pieces go
 
-- `planner/`: done. Tune `planner/prompts.py` (system prompt + example) rather
+- `waypoint/planner/`: done. Tune `waypoint/planner/prompts.py` (system prompt + example) rather
   than the call site.
-- `verifier/`: done. Tune the aircraft model in `VerifierConfig` rather than
-  the checks; add a new check as a function in `verifier/checks.py` plus a
+- `waypoint/verifier/`: done. Tune the aircraft model in `VerifierConfig` rather than
+  the checks; add a new check as a function in `waypoint/verifier/checks.py` plus a
   `ViolationType`.
-- `sim/`: done. Tune the airframe in `SimConfig` and the disturbances in
-  `Wind` / `FaultSchedule`; bridging to PX4 later means reimplementing
-  `Executor.run()` and keeping the generator interface.
-- `feedback/stub_feedback.py`: set `replan_required=True` to trigger the
-  adaptation loop. `orchestrator/loop.py` counts these in `MissionReport.replans`;
-  `run_mission(planner=...)` already takes an injected planner for it. The
-  *verification* half of that loop is closed: `api/missions.py` and
-  `scripts/explore.py` both hand a rejected plan back to the planner with the
-  violations, but the *in-flight* half, replanning because of what the aircraft
-  saw, still goes through this stub.
-- `api/`: the routes are thin. New capability belongs in the packages they call,
-  not here; `api/missions.py` is the only file with logic of its own, and that
+- `waypoint/sim/`: done. Tune the airframe in `SimConfig` and the disturbances in
+  `Wind` / `FaultSchedule`. `CustomSimBackend` (`sim/backend.py`) is its
+  `ExecutorBackend`; `Executor.resume(plan)` is what lets a new plan take over
+  mid-flight.
+- `waypoint/feedback/`: a new reason to replan is a function in `monitor.py`
+  returning a `ReplanTrigger`, plus a `TriggerKind`; `needs_replan` tries them in
+  order. GPS degradation is the obvious next one.
+- `waypoint/orchestrator/loop.py`: the closed loop. It touches the aircraft only
+  through `ExecutorBackend`, and every decision goes through `MissionLog.add`.
+  `scripts/explore.py` flies every mission through it; `waypoint/api/missions.py`
+  still runs its own (ground-only) replan loop, and moving it onto
+  `run_mission` is the next step.
+- `waypoint/api/`: the routes are thin. New capability belongs in the packages they call,
+  not here; `waypoint/api/missions.py` is the only file with logic of its own, and that
   logic is the stage-by-stage reporting.
-- `gazebo/`: `scene.py` writes the world, `launch.py` runs the three processes
+- `waypoint/gazebo/`: `scene.py` writes the world, `launch.py` runs the three processes
   and flies the ticks, `bridge.py` is the only thing that talks to Gazebo. A
-  PX4/Gazebo backend would replace `Executor.run()`, not any of this: the world
-  export is the half of that job already done.
+  PX4/Gazebo backend would be a new `ExecutorBackend`, not a change here: the
+  world export is the half of that job already done.

@@ -7,8 +7,8 @@ import logging
 import pytest
 
 from conftest import VALID_PAYLOAD, SequenceClient, http_error, json_response
-from planner import MissionConstraints, PlannerAPIError, plan
-from planner.config import MODEL_LADDER, get_model, get_model_ladder
+from waypoint.planner import MissionConstraints, PlannerAPIError, plan
+from waypoint.planner.config import MODEL_LADDER, get_model, get_model_ladder
 
 
 def test_the_ladder_starts_at_36_flash():
@@ -107,7 +107,7 @@ def test_a_connection_error_shifts_too(constraints):
 def test_a_shift_is_logged_so_the_operator_sees_it(constraints, caplog):
     client = SequenceClient(http_error(500), json_response(VALID_PAYLOAD))
 
-    with caplog.at_level(logging.WARNING, logger="planner.llm_planner"):
+    with caplog.at_level(logging.WARNING, logger="waypoint.planner.llm_planner"):
         plan("survey the north field", constraints, client=client)
 
     assert "gemini-3.6-flash unavailable" in caplog.text
@@ -116,7 +116,7 @@ def test_a_shift_is_logged_so_the_operator_sees_it(constraints, caplog):
 
 def test_a_malformed_plan_does_not_shift(constraints):
     """A bad plan is a planning failure, not an availability failure."""
-    from planner import PlanValidationError
+    from waypoint.planner import PlanValidationError
 
     client = SequenceClient(json_response({"subtasks": []}))
 

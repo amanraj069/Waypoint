@@ -16,8 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from orchestrator.plotting import render  # noqa: E402
-from orchestrator.runlog import RUNS_DIR, read_run  # noqa: E402
+from waypoint.orchestrator.plotting import render  # noqa: E402
+from waypoint.orchestrator.runlog import RUNS_DIR, read_run  # noqa: E402
 
 
 def latest_run(runs_dir: Path) -> Path:

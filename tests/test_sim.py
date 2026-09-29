@@ -11,8 +11,8 @@ from collections.abc import Iterator
 
 import pytest
 
-from planner import Action, MissionConstraints, Obstacle, Plan, SubTask, Waypoint
-from sim import (
+from waypoint.planner import Action, MissionConstraints, Obstacle, Plan, SubTask, Waypoint
+from waypoint.sim import (
     Executor,
     FaultEvent,
     FaultSchedule,
@@ -24,7 +24,7 @@ from sim import (
     execute,
     initial_state,
 )
-from sim.dynamics import desired_velocity, distance
+from waypoint.sim.dynamics import desired_velocity, distance
 
 CONFIG = SimConfig()
 

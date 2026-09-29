@@ -1,0 +1,11 @@
+{
+  "events": [
+    {
+      "type": "OBSTACLE_APPEARS",
+      "name": "crane spotted",
+      "trigger": { "at_waypoint": 2 },
+      "ahead": 35.0,
+      "obstacle": { "x": 0.0, "y": 0.0, "radius": 8.0, "height": 60.0, "name": "mobile crane" }
+    }
+  ]
+}

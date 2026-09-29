@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-from planner import Action, GeoPoint, MissionConstraints, Obstacle, Plan, SubTask, Waypoint
-from verifier import (
+from waypoint.planner import Action, GeoPoint, MissionConstraints, Obstacle, Plan, SubTask, Waypoint
+from waypoint.verifier import (
     DEFAULT_CONFIG,
     Severity,
     VerificationResult,

@@ -27,7 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from world.generate import (  # noqa: E402
+from waypoint.world.generate import (  # noqa: E402
     BUILDERS,
     BUILT_IN,
     chandni_chowk,
@@ -36,9 +36,10 @@ from world.generate import (  # noqa: E402
     munnar,
     rolling_terrain,
 )
-from world.models import World  # noqa: E402
+from waypoint.paths import WORLDS_DIR  # noqa: E402
+from waypoint.world.models import World  # noqa: E402
 
-WORLDS = Path("worlds")
+WORLDS = WORLDS_DIR
 
 
 def python_command() -> str:
@@ -99,7 +100,7 @@ def main(argv: list[str]) -> int:
     else:
         if args.lat is None or args.lon is None:
             parser.error("osm needs --lat and --lon")
-        from world.osm import OSMError, fetch  # noqa: PLC0415 -- only this path needs the network
+        from waypoint.world.osm import OSMError, fetch  # noqa: PLC0415 -- only this path needs the network
 
         terrain = (
             rolling_terrain(half_extent=args.radius * 1.5, amplitude=14.0,

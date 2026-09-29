@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 from google import genai
 
-from planner import GeoPoint, MissionConstraints
+from waypoint.planner import GeoPoint, MissionConstraints
 
 
 @dataclass
@@ -97,13 +97,13 @@ def no_network(monkeypatch):
         raise AssertionError("test attempted to construct a real Gemini client")
 
     monkeypatch.setattr(genai, "Client", tripwire)
-    monkeypatch.setattr("planner.llm_planner._client", None)
+    monkeypatch.setattr("waypoint.planner.llm_planner._client", None)
 
 
 @pytest.fixture(autouse=True)
 def isolated_runs_dir(monkeypatch, tmp_path):
     """Backstop: no test may write into the project's real runs/ directory."""
-    monkeypatch.setattr("orchestrator.loop.RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr("waypoint.orchestrator.loop.RUNS_DIR", tmp_path / "runs")
 
 
 @pytest.fixture
@@ -126,7 +126,7 @@ def constraints() -> MissionConstraints:
 def sample_plan():
     """A valid Plan built locally -- for tests of sim/verifier that need a plan,
     not of the planner that produces one."""
-    from planner import Plan
+    from waypoint.planner import Plan
 
     return Plan.model_validate({**VALID_PAYLOAD, "mission_text": "survey the north field"})
 
@@ -167,8 +167,8 @@ class SequenceClient:
         return outcome
 
 
-def fake_planner(mission_text: str, constraints: MissionConstraints):
+def fake_planner(mission_text: str, constraints: MissionConstraints, **_):
     """A planner that returns VALID_PAYLOAD without calling the API."""
-    from planner import Plan
+    from waypoint.planner import Plan
 
     return Plan.model_validate({**VALID_PAYLOAD, "mission_text": mission_text})

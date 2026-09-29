@@ -12,8 +12,8 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from api.main import app
-from world.generate import BUILT_IN
+from waypoint.api.main import app
+from waypoint.world.generate import BUILT_IN
 
 
 @pytest.fixture(scope="module")
@@ -26,7 +26,7 @@ def runs_dir(tmp_path, monkeypatch):
     """Write runs somewhere disposable, so a test does not fill runs/."""
     directory = tmp_path / "runs"
     directory.mkdir()
-    monkeypatch.setattr("api.missions.RUNS_DIR", directory)
+    monkeypatch.setattr("waypoint.api.missions.RUNS_DIR", directory)
     return directory
 
 
@@ -46,7 +46,7 @@ def test_health_says_whether_a_mission_can_be_planned_at_all(client):
 
 def test_a_mission_in_english_is_refused_without_a_key(client, monkeypatch):
     """Better a clear 503 than a 500 from the planner four seconds later."""
-    monkeypatch.setattr("api.main.get_api_key", lambda: None)
+    monkeypatch.setattr("waypoint.api.main.get_api_key", lambda: None)
 
     response = client.post("/api/missions", json={"mission": "survey the north lawn"})
 
@@ -209,7 +209,7 @@ def test_a_mission_that_was_never_started_is_a_404(client):
 
 
 def test_a_flown_run_can_be_listed_read_and_deleted(client, runs_dir, monkeypatch):
-    monkeypatch.setattr("api.catalog.RUNS_DIR", runs_dir)
+    monkeypatch.setattr("waypoint.api.catalog.RUNS_DIR", runs_dir)
     mission_id = client.post("/api/missions", json={"plan": "chandni_chowk_run"}).json()["id"]
     run_id = stream(client, mission_id)[-1]["run"]
 
@@ -231,8 +231,8 @@ def test_a_flown_run_can_be_listed_read_and_deleted(client, runs_dir, monkeypatc
 
 
 def test_the_launch_point_defaults_to_the_origin():
-    from api.missions import home_for
-    from api.catalog import load_world
+    from waypoint.api.missions import home_for
+    from waypoint.api.catalog import load_world
 
     assert home_for(None, None) == (0.0, 0.0, 0.0)
     world = load_world("lodhi")
@@ -240,8 +240,8 @@ def test_the_launch_point_defaults_to_the_origin():
 
 
 def test_a_chosen_launch_point_stands_on_the_ground_under_it():
-    from api.missions import home_for
-    from api.catalog import load_world
+    from waypoint.api.missions import home_for
+    from waypoint.api.catalog import load_world
 
     world = load_world("lodhi")           # gentle ground: the pick is kept
     x, y, z = home_for(world, (150.0, -120.0))
@@ -253,9 +253,9 @@ def test_a_chosen_launch_point_stands_on_the_ground_under_it():
 
 def test_a_pad_on_a_hillside_is_moved_to_ground_it_can_use():
     """Picking a slope is not refused -- it is corrected, and says so."""
-    from api.missions import site_for
-    from api.catalog import load_world
-    from world.landing import survey
+    from waypoint.api.missions import site_for
+    from waypoint.api.catalog import load_world
+    from waypoint.world.landing import survey
 
     world = load_world("munnar")          # a hill station: most of it is steep
     asked = survey(world, 150.0, -120.0)
@@ -271,8 +271,8 @@ def test_a_pad_on_a_hillside_is_moved_to_ground_it_can_use():
 
 
 def test_a_pad_on_a_roof_is_moved_off_it():
-    from api.missions import site_for
-    from api.catalog import load_world
+    from waypoint.api.missions import site_for
+    from waypoint.api.catalog import load_world
 
     world = load_world("lodhi")
     building = world.buildings[0]
@@ -283,8 +283,8 @@ def test_a_pad_on_a_roof_is_moved_off_it():
 
 
 def test_nowhere_to_land_is_refused_rather_than_guessed():
-    from api.missions import MissionError, site_for
-    from world.models import Terrain, World
+    from waypoint.api.missions import MissionError, site_for
+    from waypoint.world.models import Terrain, World
 
     # A world that is steep everywhere: there is no good answer to give.
     cliff = World(
@@ -301,8 +301,8 @@ def test_nowhere_to_land_is_refused_rather_than_guessed():
 
 
 def test_the_planner_is_told_where_it_starts():
-    from planner.prompts import build_plan_prompt
-    from planner import DEFAULT_CONSTRAINTS
+    from waypoint.planner.prompts import build_plan_prompt
+    from waypoint.planner import DEFAULT_CONSTRAINTS
 
     prompt = build_plan_prompt("survey it", DEFAULT_CONSTRAINTS, None, (120.0, -60.0, 3.5))
 
@@ -311,8 +311,8 @@ def test_the_planner_is_told_where_it_starts():
 
 
 def test_the_planner_is_told_when_it_lands_somewhere_else():
-    from planner.prompts import build_plan_prompt
-    from planner import DEFAULT_CONSTRAINTS
+    from waypoint.planner.prompts import build_plan_prompt
+    from waypoint.planner import DEFAULT_CONSTRAINTS
 
     prompt = build_plan_prompt(
         "survey it", DEFAULT_CONSTRAINTS, None, (10.0, 20.0, 1.5), (300.0, -40.0, 12.0)
@@ -324,7 +324,7 @@ def test_the_planner_is_told_when_it_lands_somewhere_else():
 
 
 def test_the_body_accepts_a_landing_point():
-    from api.main import MissionBody
+    from waypoint.api.main import MissionBody
 
     body = MissionBody(mission="x", home=(0.0, 0.0), landing=(120.0, 45.0))
     assert body.landing == (120.0, 45.0)
@@ -335,7 +335,7 @@ def test_a_bundled_plan_will_not_take_a_chosen_pad():
     """Its waypoints are absolute; flying it from elsewhere is a different mission."""
     import uuid
 
-    from api.missions import Mission, MissionError, MissionRequest, run_mission
+    from waypoint.api.missions import Mission, MissionError, MissionRequest, run_mission
 
     for pads in ({"home": (80.0, 40.0)}, {"landing": (80.0, 40.0)}):
         mission = Mission(
@@ -348,7 +348,7 @@ def test_a_bundled_plan_will_not_take_a_chosen_pad():
 
 def test_the_body_accepts_a_launch_point(client):
     """The field exists and is typed as a pair of metres."""
-    from api.main import MissionBody
+    from waypoint.api.main import MissionBody
 
     body = MissionBody(mission="x", home=(12.5, -30.0))
     assert body.home == (12.5, -30.0)

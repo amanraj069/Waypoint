@@ -8,7 +8,7 @@ import pytest
 
 from conftest import FakeClient, FakeError, FakeInteraction
 from conftest import VALID_PAYLOAD, json_response
-from planner import (
+from waypoint.planner import (
     Action,
     PlannerAPIError,
     GeoPoint,
@@ -22,9 +22,9 @@ from planner import (
     plan,
     replan,
 )
-from planner.config import API_KEY_VAR, get_model
-from planner.llm_planner import RESPONSE_FORMAT, get_client
-from planner.prompts import PLAN_SCHEMA
+from waypoint.planner.config import API_KEY_VAR, get_model
+from waypoint.planner.llm_planner import RESPONSE_FORMAT, get_client
+from waypoint.planner.prompts import PLAN_SCHEMA
 
 
 # --- happy path -------------------------------------------------------------

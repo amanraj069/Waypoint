@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from planner import DEFAULT_CONSTRAINTS, PlannerError, plan  # noqa: E402
+from waypoint.planner import DEFAULT_CONSTRAINTS, PlannerError, plan  # noqa: E402
 
 
 def main(argv: list[str]) -> int:

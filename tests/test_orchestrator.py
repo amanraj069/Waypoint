@@ -5,19 +5,19 @@ from __future__ import annotations
 import pytest
 
 from conftest import fake_planner
-from orchestrator import run_mission
-from orchestrator.run import main
-from planner import DEFAULT_CONSTRAINTS, MissionConstraints, Plan
+from waypoint.orchestrator import run_mission
+from waypoint.orchestrator.run import main
+from waypoint.planner import DEFAULT_CONSTRAINTS, MissionConstraints, Plan
 
 
 @pytest.fixture
 def stub_plan(monkeypatch):
     """Point the CLI's default planner at the fake one."""
-    monkeypatch.setattr("orchestrator.loop.default_planner", fake_planner)
+    monkeypatch.setattr("waypoint.orchestrator.loop.default_planner", fake_planner)
 
 
 def test_run_mission_completes(capsys, tmp_path):
-    report = run_mission("survey the north field", planner=fake_planner, runs_dir=tmp_path)
+    report = run_mission("survey the north field", planner=fake_planner, runs_dir=tmp_path).report
     assert report.verification.passed
     assert report.states
     assert report.completed
@@ -26,7 +26,7 @@ def test_run_mission_completes(capsys, tmp_path):
 
 def test_run_mission_samples_telemetry_to_the_console(capsys, tmp_path):
     """At 10 Hz, printing every tick is noise: one line per second of flight."""
-    report = run_mission("survey the north field", planner=fake_planner, runs_dir=tmp_path)
+    report = run_mission("survey the north field", planner=fake_planner, runs_dir=tmp_path).report
     out = capsys.readouterr().out
 
     printed = [line for line in out.splitlines() if "pos=(" in line]
@@ -56,7 +56,7 @@ def test_quiet_mode_prints_nothing(capsys, tmp_path):
 def test_planner_receives_the_constraints(tmp_path):
     seen = {}
 
-    def spy(mission_text: str, constraints: MissionConstraints) -> Plan:
+    def spy(mission_text: str, constraints: MissionConstraints, **kwargs) -> Plan:
         seen["mission"] = mission_text
         seen["constraints"] = constraints
         return fake_planner(mission_text, constraints)
@@ -70,7 +70,7 @@ def test_planner_receives_the_constraints(tmp_path):
 def test_custom_constraints_reach_the_planner(constraints, tmp_path):
     seen = {}
 
-    def spy(mission_text: str, c: MissionConstraints) -> Plan:
+    def spy(mission_text: str, c: MissionConstraints, **kwargs) -> Plan:
         seen["constraints"] = c
         return fake_planner(mission_text, c)
 
@@ -81,7 +81,7 @@ def test_custom_constraints_reach_the_planner(constraints, tmp_path):
 
 def test_cli_exits_zero(capsys, stub_plan):
     assert main(["--mission", "survey the north field"]) == 0
-    assert "Mission complete" in capsys.readouterr().out
+    assert "MISSION COMPLETE" in capsys.readouterr().out
 
 
 def test_cli_requires_a_mission():
