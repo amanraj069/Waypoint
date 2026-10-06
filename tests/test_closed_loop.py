@@ -17,11 +17,12 @@ import pytest
 
 from conftest import VALID_PAYLOAD
 from waypoint.backends import BackendError, ExecutorBackend, make_backend
+from waypoint.feedback import PerceptionEvent, PerceptionKind, PerceptionSeverity, PerceptionSource
 from waypoint.gazebo.scene import write_scene
 from waypoint.orchestrator import MissionLog, run_mission
 from waypoint.orchestrator.run_full import main
 from waypoint.orchestrator.runlog import read_run
-from waypoint.planner import DEFAULT_CONSTRAINTS, Obstacle, Plan
+from waypoint.planner import DEFAULT_CONSTRAINTS, Obstacle, Plan, PlannerError
 from waypoint.planner.models import Action, SubTask, Waypoint
 from waypoint.sim import FaultEvent, FaultSchedule, FaultType, Trigger
 from waypoint.sim.backend import CustomSimBackend
@@ -137,7 +138,8 @@ def test_the_log_records_every_step_in_order(flown):
         "plan_proposed", "verification",        # too high: rejected
         "plan_proposed", "verification",        # corrected: passes
         "execution_started",
-        "replan_triggered",                     # the crane
+        "perception",                           # the crane is seen
+        "replan_triggered",                     # and it is in the way
         "plan_proposed", "verification",        # the detour: passes
         "execution_resumed",
         "mission_finished",
@@ -400,3 +402,65 @@ def test_a_chosen_start_and_landing_are_flown_and_recorded(tmp_path):
     assert (states[0].x, states[0].y) == (30.0, -20.0)
     assert math.hypot(states[-1].x - 60, states[-1].y - 10) < 1.5 and log.outcome == "completed"
     assert read_run(log.run_file)["sim"]["config"]["home"] == list(start)
+
+
+# ---------------------------------------------------------------------------
+# Perception and the other triggers, through the whole loop
+# ---------------------------------------------------------------------------
+
+
+def test_the_replan_fires_on_the_tick_the_crane_appears(flown):
+    _, log = flown
+    appeared = log.report.obstacles[-1]["appeared_at"]
+    (seen,) = log.of("perception")
+    (trigger,) = log.of("replan_triggered")
+    assert seen["t"] == trigger["t"] == appeared
+    assert seen["obstacle"]["name"] == CRANE.name and seen["source"] == "symbolic"
+
+
+class Lookout(PerceptionSource):
+    """Sees a crane nobody else knows about, once the aircraft is 20 m up the route."""
+
+    name = "lookout"
+
+    def get_events(self, current_state):
+        if current_state.y < 20:
+            return []
+        crane = CRANE.model_copy(update={"x": 0.0, "y": 50.0})
+        return [PerceptionEvent(
+            kind=PerceptionKind.OBSTACLE, t=current_state.timestamp, position=(0.0, 50.0, 0.0),
+            severity=PerceptionSeverity.WARNING, description="a crane, seen by the lookout",
+            source=self.name, distance=30.0, obstacle=crane,
+        )]
+
+
+def test_any_perception_source_drives_the_loop(tmp_path):
+    """No fault at all: the backend knows of no crane; only the perception source does."""
+    script = Script(first=good_plan())
+    log = fly(script, tmp_path, faults=FaultSchedule(), perception=Lookout())
+    assert log.of("mission_started")[0]["perception"] == "lookout"
+    (trigger,) = log.of("replan_triggered")
+    assert trigger["trigger"] == "OBSTACLE_ON_ROUTE"
+    inflight = next(c for c in script.calls if c["kind"] == "inflight")
+    assert any(o.name == CRANE.name for o in inflight["constraints"].obstacles)
+    assert log.outcome == "completed"
+
+
+def refuse(*args, **kwargs):
+    raise PlannerError("no replanner in this test")
+
+
+def test_a_battery_trend_replan_is_logged(tmp_path):
+    """A failing cell: the trend sees it long before the battery level alone would."""
+    spike = FaultSchedule.of(FaultEvent(
+        type=FaultType.BATTERY_DRAIN_SPIKE, trigger=Trigger(time=5.0), magnitude=3.0, duration=60.0, name="cell fault",
+    ))
+    log = run_mission(
+        "survey the north field", DEFAULT_CONSTRAINTS, spike, CustomSimBackend(),
+        planner=Script(first=good_plan()).planner, replanner=refuse, verbose=False, runs_dir=tmp_path,
+    )
+    (trigger,) = log.of("replan_triggered")
+    assert trigger["trigger"] == "BATTERY_INSUFFICIENT"
+    assert 5.0 < trigger["t"] < 10.0  # within seconds of the cell failing at t=5
+    assert trigger["drain_ratio"] > 10
+    assert log.outcome == "aborted"  # no replanner, so it comes down where it is

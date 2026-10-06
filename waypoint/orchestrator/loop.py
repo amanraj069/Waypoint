@@ -1,7 +1,7 @@
 """The closed loop: plan, verify, fly, notice, replan, and fly on.
 
     PLANNING -> VERIFYING (-> REPLANNING -> RE-VERIFYING)* -> EXECUTING
-        -> every tick: TelemetrySnapshot -> needs_replan()
+        -> every tick: perception -> TelemetrySnapshot -> needs_replan(history)
         -> REPLAN TRIGGERED -> summarize_for_llm() -> replan() from here
         -> RE-VERIFYING (with its own correction loop) -> RESUMING -> ...
         -> LANDED, or a hard failure: too many replans, no safe plan, battery flat
@@ -15,6 +15,7 @@ itself goes into the usual run file, which Gazebo replays.
 from __future__ import annotations
 
 import itertools
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -23,13 +24,14 @@ from typing import Any
 
 from waypoint.backends import ExecutorBackend, make_backend
 from waypoint.feedback import FeedbackConfig, ReplanTrigger, TelemetrySnapshot, TriggerKind
+from waypoint.feedback import PerceptionEvent, PerceptionSource, SymbolicPerceptionSource
 from waypoint.feedback import needs_replan, summarize_for_llm
 from waypoint.orchestrator.mission_log import MissionLog
 from waypoint.orchestrator.runlog import RUNS_DIR, run_path, write_run
 from waypoint.planner import DEFAULT_CONSTRAINTS, MissionConstraints, Plan, PlannerError
 from waypoint.planner import plan as default_planner
 from waypoint.planner import replan as default_replanner
-from waypoint.planner.models import Action, SubTask, Waypoint
+from waypoint.planner.models import Action, Obstacle, SubTask, Waypoint
 from waypoint.sim import NO_FAULTS, FaultSchedule, SimConfig, UAVState, Wind
 from waypoint.verifier import VerificationResult, verify
 from waypoint.verifier.models import DEFAULT_CONFIG as VERIFIER_DEFAULTS
@@ -152,6 +154,7 @@ def run_mission(
     max_total_replans: int = 3,
     check_every: int = 1,
     feedback_config: FeedbackConfig | None = None,
+    perception: PerceptionSource | None = None,
     verbose: bool = True,
     print_every: float = PRINT_EVERY_SECONDS,
     runs_dir: Path | None = _UNSET,
@@ -163,8 +166,10 @@ def run_mission(
     `max_replan_attempts` bounds the corrections asked for after each verifier
     rejection (on the ground and in the air alike); `max_total_replans` bounds
     how often the flight may be interrupted. `check_every` is how many ticks go
-    by between feedback checks. `planner` and `replanner` default to the LLM
-    and are injectable, so the loop runs deterministically in tests.
+    by between feedback checks. `perception` is how the aircraft sees what is
+    around it; it defaults to `SymbolicPerceptionSource` over the backend.
+    `planner` and `replanner` default to the LLM and are injectable, so the
+    loop runs deterministically in tests.
 
     Returns the `MissionLog`; its `report` holds the flight, and unless
     `runs_dir` is None the run file and the JSONL log are written there.
@@ -174,6 +179,7 @@ def run_mission(
     backend = backend or make_backend("custom", world=world)
     planner = planner or default_planner
     replanner = replanner or default_replanner
+    perception = perception or SymbolicPerceptionSource(backend)
     runs_dir = RUNS_DIR if runs_dir is _UNSET else runs_dir
     when = datetime.now()
 
@@ -187,6 +193,7 @@ def run_mission(
         mission=mission_text,
         backend=backend.name,
         backend_detail=backend.describe(),
+        perception=perception.name,
         world=world.name if world else None,
         home=home,
         landing=landing,
@@ -301,7 +308,13 @@ def run_mission(
         out.say(faults.describe())
 
     current, current_constraints = plan, constraints
+    route_start = backend.state.reported_position
     feedback_config = feedback_config or FeedbackConfig()
+    # Everything known about: what the plan was verified against, then every
+    # obstacle perception has reported since, in the order it was first seen.
+    known: list[Obstacle] = list(constraints.obstacles)
+    # The current plan's recent telemetry, for trends; cleared when a plan takes over.
+    history: deque[TelemetrySnapshot] = deque()
     start_battery: float | None = None
     last_battery_replan: float | None = None
     shown = 0  # backend events already printed
@@ -322,11 +335,16 @@ def run_mission(
             shown = len(events)
             if not watch or tick % check_every:
                 continue
-            trigger = needs_replan(
-                _snapshot(state, route, current_constraints, backend),
-                feedback_config,
-                last_battery_replan=last_battery_replan,
-            )
+            seen = perception.get_events(state)
+            for event in seen:
+                if event.obstacle is not None and event.obstacle not in known:
+                    known.append(event.obstacle)
+                    mlog.add("perception", **event.as_record())
+                    out.event({"t": event.t, "type": "PERCEIVED", "description": event.description})
+            history.append(_snapshot(state, route, current_constraints, known, route_start, seen))
+            while history[0].t < state.timestamp - feedback_config.history_seconds:
+                history.popleft()
+            trigger = needs_replan(history, feedback_config, last_battery_replan=last_battery_replan)
             if trigger:
                 return trigger
         return None
@@ -357,10 +375,13 @@ def run_mission(
         state = backend.state
         mlog.add(
             "replan_triggered",
-            number=interruptions,
-            position=list(state.reported_position),
-            battery_pct=round(state.battery_pct, 2),
-            **trigger.as_record(),
+            # A battery trigger carries its own battery_pct, the same figure.
+            **{
+                "number": interruptions,
+                "position": list(state.reported_position),
+                "battery_pct": round(state.battery_pct, 2),
+                **trigger.as_record(),
+            },
         )
         out.tick(state, force=True)
         out.phase("REPLAN TRIGGERED", f"t={trigger.t:.1f}s  {trigger.reason}")
@@ -370,7 +391,7 @@ def run_mission(
             failsafe(reason)
             break
 
-        snapshot = _snapshot(state, current, current_constraints, backend)
+        snapshot = history[-1]
         here = snapshot.position
         spent = (start_battery or state.battery_pct) - state.battery_pct
         budget = constraints.battery_budget_pct - spent
@@ -379,7 +400,7 @@ def run_mission(
             failsafe(reason)
             break
         in_air = constraints.model_copy(
-            update={"obstacles": list(backend.obstacles), "battery_budget_pct": min(100.0, budget)}
+            update={"obstacles": list(known), "battery_budget_pct": min(100.0, budget)}
         )
         situation = summarize_for_llm(snapshot, trigger)
 
@@ -412,7 +433,8 @@ def run_mission(
         )
         mlog.add("execution_resumed", plan_id=fresh_id, t=trigger.t)
         out.phase("RESUMING", f"plan {fresh_id}")
-        current, current_constraints = fresh, in_air
+        current, current_constraints, route_start = fresh, in_air, here
+        history.clear()
 
     if report.states:
         out.tick(report.states[-1], force=True)
@@ -481,7 +503,12 @@ def _finish(
 
 
 def _snapshot(
-    state: UAVState, plan: Plan, constraints: MissionConstraints, backend: ExecutorBackend
+    state: UAVState,
+    plan: Plan,
+    constraints: MissionConstraints,
+    known: list[Obstacle],
+    route_start: tuple[float, float, float],
+    perceived: list[PerceptionEvent],
 ) -> TelemetrySnapshot:
     return TelemetrySnapshot(
         t=state.timestamp,
@@ -494,9 +521,11 @@ def _snapshot(
         subtask=state.subtask,
         plan_waypoints=tuple(plan.waypoints()),
         planned_obstacles=tuple(constraints.obstacles),
-        known_obstacles=tuple(backend.obstacles),
+        known_obstacles=tuple(known),
         active_faults=state.active_faults,
         min_separation=constraints.min_separation,
+        route_start=route_start,
+        perception=tuple(perceived),
     )
 
 
