@@ -11,6 +11,7 @@ produces them:
 | `plan_proposed`     | every plan the planner returns: `source` is `initial`, `verification_replan` or `inflight_replan` |
 | `verification`      | every verifier verdict, pass or fail, with its violations |
 | `execution_started` | the first verified plan starts flying |
+| `perception`        | the perception source reported an obstacle not known before: `type`, `position`, `severity`, `description`, `obstacle` |
 | `replan_triggered`  | the feedback monitor stopped the flight: `trigger` (what), `reason`, `t`, `position` |
 | `execution_resumed` | a new verified plan takes over mid-flight |
 | `failsafe`          | no safe plan could be found in the air, so it lands where it is |
@@ -32,6 +33,7 @@ KINDS = (
     "plan_proposed",
     "verification",
     "execution_started",
+    "perception",
     "replan_triggered",
     "execution_resumed",
     "failsafe",

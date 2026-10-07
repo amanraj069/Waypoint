@@ -12,7 +12,7 @@ natural language mission
         -> planner    (LLM hierarchical planner)   [REAL: Gemini, strict JSON response schema]
         -> verifier   (deterministic safety check) [REAL: shapely geometry, no model in the loop]
         -> sim        (UAV executor)               [REAL: point-mass physics, wind, faults, collisions]
-        -> feedback   (in-flight monitor)          [REAL: new obstacle on the route, battery short]
+        -> feedback   (perception + monitor)       [REAL: new obstacle on the route, battery short or failing, off route]
         -> replan loop back into planner           [REAL: on the ground after a rejection, in the air from where it is]
 ```
 
@@ -37,7 +37,7 @@ waypoint/                 the repository
 │   ├── planner/          English -> hierarchical Plan, via Gemini
 │   ├── verifier/         deterministic safety check of a Plan
 │   ├── sim/              point-mass physics, wind, fault injection
-│   ├── feedback/         the in-flight monitor: needs_replan(), summarize_for_llm()
+│   ├── feedback/         perception sources, and the in-flight monitor: needs_replan(), summarize_for_llm()
 │   ├── orchestrator/     the closed loop, its MissionLog, the CLI, run files
 │   ├── backends.py       ExecutorBackend: all the loop may ask of what flies
 │   ├── gazebo/           a run as a Gazebo world, the flight replayed in it
@@ -60,7 +60,7 @@ waypoint/                 the repository
 | `waypoint.verifier` | `verify(plan, constraints) -> VerificationResult` (`passed`, `violations`); the checks live in `verifier/checks.py` |
 | `waypoint.sim` | `UAVState`, `Executor`, point-mass `dynamics`, `Wind`, `FaultSchedule`; `execute(plan)` yields a state per 0.1 s tick |
 | `waypoint.backends` | `ExecutorBackend` (`prepare`, `run(plan)`, ...) and `make_backend("custom")`; `px4` is reserved |
-| `waypoint.feedback` | `needs_replan(snapshot) -> ReplanTrigger | None`, `summarize_for_llm(snapshot, trigger)` |
+| `waypoint.feedback` | `needs_replan(history) -> ReplanTrigger | None`, `summarize_for_llm(snapshot, trigger)`, `path_deviation()`; `PerceptionSource` and `SymbolicPerceptionSource` |
 | `waypoint.orchestrator` | `run_mission(mission, constraints, faults, backend) -> MissionLog` and the `run_full` CLI |
 | `waypoint.gazebo` | `write_scene(run)` and `play(run)`: the 3D view |
 | `waypoint.api` | FastAPI over the pipeline: worlds, missions (streamed as they happen), runs |
@@ -381,10 +381,15 @@ What the loop does, and where it is written down:
 
 - **On the ground**, a plan the verifier rejects goes back to the planner with
   the reasons, up to `--max-attempts` times (3).
-- **In the air**, the feedback monitor looks at every tick (`--check-every`). If
-  something appeared that the plan was not verified against and the rest of the
-  route passes through its keep-out, or the battery left will not cover the rest
-  of the route plus a reserve, the flight pauses. The planner gets the situation
+- **In the air**, every tick (`--check-every`) the perception source reports
+  what is around the aircraft, and the feedback monitor looks at the recent
+  telemetry. The flight pauses when one of three things is true: something
+  was perceived that the plan was not verified against, and the rest of the
+  route passes through its keep-out; the battery left will not cover the rest
+  of the route plus a reserve (costed at the observed drain rate when the
+  battery has lately been draining faster than modelled, as a failing cell
+  does); or the aircraft has been more than 15 m off its planned leg for 3 s
+  without a break. The planner gets the situation
   (`summarize_for_llm`: where it is, what is done, what is left, why) and plans
   the rest *from where it is*; that plan gets its own verify-and-correct loop,
   against the new obstacle and the battery budget that is left, then flying
@@ -396,7 +401,7 @@ What the loop does, and where it is written down:
 Two files land in `runs/`: the run file Gazebo replays (with every plan that
 flew, under `plans`), and the mission log, `<run>.log.jsonl`, one decision per
 line: `mission_started`, `plan_proposed`, `verification`, `execution_started`,
-`replan_triggered`, `execution_resumed`, `failsafe`, `mission_finished`. It
+`perception` (an obstacle seen for the first time), `replan_triggered`, `execution_resumed`, `failsafe`, `mission_finished`. It
 records the backend, so runs from different backends can be compared:
 
 ```bash
@@ -806,7 +811,11 @@ run files are covered without a key and without a network.
   mid-flight.
 - `waypoint/feedback/`: a new reason to replan is a function in `monitor.py`
   returning a `ReplanTrigger`, plus a `TriggerKind`; `needs_replan` tries them in
-  order. GPS degradation is the obvious next one.
+  order (obstacle, battery, off route). Its thresholds live on `FeedbackConfig`.
+  How the aircraft sees is a `PerceptionSource` (`perception.py`):
+  `SymbolicPerceptionSource` reads the backend's obstacles, optionally within a
+  `sensor_range`, and `run_mission(perception=...)` takes any other, such as a
+  detector on a Gazebo camera feed. GPS degradation is the obvious next trigger.
 - `waypoint/orchestrator/loop.py`: the closed loop. It touches the aircraft only
   through `ExecutorBackend`, and every decision goes through `MissionLog.add`.
   `scripts/explore.py` flies every mission through it; `waypoint/api/missions.py`
