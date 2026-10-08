@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from waypoint.api import catalog
 from waypoint.api.missions import MISSIONS, MissionError, MissionRequest, STAGES
 from waypoint.api.settings import ALLOWED_ORIGINS
-from waypoint.planner.config import get_api_key, get_model
+from waypoint.planner.config import describe_providers, get_model, get_openai_model_ladder, get_providers
 
 app = FastAPI(
     title="waypoint",
@@ -50,18 +50,24 @@ def health() -> dict:
     """What this server can do, so the page can say so before you try it.
 
     `planner_ready` is the difference between "type a mission" and "fly one of
-    the bundled plans": without a Gemini key everything except the planner still
+    the bundled plans": without an OpenAI or Gemini key everything except the planner still
     works, and the page should offer that rather than a broken text box.
     """
     return {
         "ok": True,
-        "planner_ready": get_api_key() is not None,
-        "planner_model": get_model(),
+        "planner_ready": bool(get_providers()),
+        "planner_model": _first_model(),
+        "planner_providers": describe_providers(),
         "stages": list(STAGES),
         "worlds": len(catalog.world_ids()),
         "runs": len(catalog.run_ids()),
         "plans": len(catalog.plan_cards()),
     }
+
+
+def _first_model() -> str:
+    """The model the planner tries first: OpenAI's when it is configured, else Gemini's."""
+    return get_openai_model_ladder()[0] if get_providers()[:1] == ("openai",) else get_model()
 
 
 # ---------------------------------------------------------------------------
@@ -218,11 +224,11 @@ def start_mission(body: MissionBody) -> dict:
         raise HTTPException(422, "give a mission in plain English, or a bundled plan id")
     if body.plan and not catalog.plan_path(body.plan).exists():
         raise HTTPException(404, f"no bundled plan called '{body.plan}'")
-    if body.mission.strip() and get_api_key() is None:
+    if body.mission.strip() and not get_providers():
         raise HTTPException(
             503,
-            "there is no GEMINI_API_KEY in this server's environment, so a mission "
-            "written in English cannot be planned. Fly a bundled plan instead.",
+            "there is no OPENAI_API_KEY or GEMINI_API_KEY in this server's environment, so a "
+            "mission written in English cannot be planned. Fly a bundled plan instead.",
         )
     if body.world:
         try:

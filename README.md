@@ -9,7 +9,7 @@ verifier, the simulator and the in-flight feedback are all real.
 ```
 natural language mission
         -> world      (terrain + buildings)        [REAL: four Indian places, or OpenStreetMap]
-        -> planner    (LLM hierarchical planner)   [REAL: Gemini, strict JSON response schema]
+        -> planner    (LLM hierarchical planner)   [REAL: OpenAI, then Gemini; strict JSON schema]
         -> verifier   (deterministic safety check) [REAL: shapely geometry, no model in the loop]
         -> sim        (UAV executor)               [REAL: point-mass physics, wind, faults, collisions]
         -> feedback   (perception + monitor)       [REAL: new obstacle on the route, battery short or failing, off route]
@@ -34,7 +34,7 @@ world and the flight is replayed in it.
 waypoint/                 the repository
 ├── waypoint/             all the code, one importable package
 │   ├── world/            where it flies: terrain, buildings, landmarks
-│   ├── planner/          English -> hierarchical Plan, via Gemini
+│   ├── planner/          English -> hierarchical Plan, via OpenAI or Gemini
 │   ├── verifier/         deterministic safety check of a Plan
 │   ├── sim/              point-mass physics, wind, fault injection
 │   ├── feedback/         perception sources, and the in-flight monitor: needs_replan(), summarize_for_llm()
@@ -42,6 +42,7 @@ waypoint/                 the repository
 │   ├── backends.py       ExecutorBackend: all the loop may ask of what flies
 │   ├── gazebo/           a run as a Gazebo world, the flight replayed in it
 │   ├── api/              the same pipeline over HTTP
+│   ├── experiments/      batch runs, ablations, metrics and plots
 │   ├── scenario.py       short specs ("lodhi", "sample", "4,0,0") -> inputs
 │   └── paths.py          where data, worlds and runs live on disk
 ├── scripts/              the commands you run
@@ -49,6 +50,7 @@ waypoint/                 the repository
 │   ├── worlds/           saved environments, one JSON per place
 │   ├── plans/            verified plans that fly without an API key
 │   └── faults/           fault schedules to replay
+├── experiments/          the batch file and how to reproduce each metric; results in runs/ (gitignored)
 ├── runs/                 every flight flown (gitignored)
 └── tests/                pytest suite, one module per component
 ```
@@ -56,7 +58,7 @@ waypoint/                 the repository
 | Package | What to reach for |
 | --- | --- |
 | `waypoint.world` | `World`, `Terrain`, `Building`; procedural cities and an OpenStreetMap importer |
-| `waypoint.planner` | `plan()` / `replan()` against Gemini; `Waypoint`, `SubTask`, `Plan`, `Action`, `MissionConstraints` |
+| `waypoint.planner` | `plan()` / `replan()` against OpenAI, falling back to Gemini; `Waypoint`, `SubTask`, `Plan`, `Action`, `MissionConstraints` |
 | `waypoint.verifier` | `verify(plan, constraints) -> VerificationResult` (`passed`, `violations`); the checks live in `verifier/checks.py` |
 | `waypoint.sim` | `UAVState`, `Executor`, point-mass `dynamics`, `Wind`, `FaultSchedule`; `execute(plan)` yields a state per 0.1 s tick |
 | `waypoint.backends` | `ExecutorBackend` (`prepare`, `run(plan)`, ...) and `make_backend("custom")`; `px4` is reserved |
@@ -64,6 +66,7 @@ waypoint/                 the repository
 | `waypoint.orchestrator` | `run_mission(mission, constraints, faults, backend) -> MissionLog` and the `run_full` CLI |
 | `waypoint.gazebo` | `write_scene(run)` and `play(run)`: the 3D view |
 | `waypoint.api` | FastAPI over the pipeline: worlds, missions (streamed as they happen), runs |
+| `waypoint.experiments` | `run_batch(config)` and `python -m waypoint.experiments run/report`: catch rate, replan success and latency, safety vs optimality, ablations |
 
 Every path in the code comes from `waypoint/paths.py`, so a command behaves the
 same whichever directory you run it from. Bundled plans, fault schedules and
@@ -76,8 +79,13 @@ Secrets live in `.env`, which is gitignored. `.env.example` documents the keys:
 
 | Variable | Required | Meaning |
 | --- | --- | --- |
-| `GEMINI_API_KEY` | yes | Gemini API key ([get one](https://aistudio.google.com/apikey)) |
-| `GEMINI_MODEL` | no | Moves one model to the front of the ladder; defaults to `gemini-3.6-flash` |
+| `OPENAI_API_KEY` | one of the two | OpenAI API key; when set, the planner tries OpenAI first ([get one](https://platform.openai.com/api-keys)) |
+| `GEMINI_API_KEY` (or `GEMINI_API_KEY1`, `2`, ...) | one of the two | Gemini API key, the fallback, or the only planner when there is no OpenAI key ([get one](https://aistudio.google.com/apikey)) |
+| `COST` | no | `HIGH` (default): OpenAI plans with `gpt-5-mini`, then `gpt-4o-mini`, then `gpt-5-nano`. `LOW`: `gpt-5-nano`, then `gpt-4.1-nano` |
+| `OPENAI_REASONING_EFFORT` | no | How long `gpt-5`/`o` models think: `minimal`, `low`, `medium`, `high`. Unset, every model uses `low`; set, it applies to every model. Thinking is billed as output |
+| `OPENAI_MODEL` | no | Moves one model to the front of the `COST` tier's ladder |
+| `OPENAI_MODELS` | no | Replaces the OpenAI ladder outright, comma separated (wins over `COST`) |
+| `GEMINI_MODEL` / `GEMINI_MODELS` | no | The same, for the Gemini ladder |
 
 A real environment variable overrides `.env`, so exported keys and CI secrets
 win. A blank key is treated as unset, so the placeholder in a fresh `.env`
@@ -104,11 +112,11 @@ Gazebo's Python bindings are built for Homebrew's Python rather than the
 project's, so the one process that talks to Gazebo runs in that small side
 environment; everything else runs in `.venv`. If you only want the CLI,
 `".[dev]"` is enough; `api` is just FastAPI and uvicorn, and nothing outside
-`waypoint/api/` imports them. A Gemini key is only
+`waypoint/api/` imports them. An LLM key (OpenAI or Gemini) is only
 required to *plan* a new mission; flying and replaying work without one:
 
 ```bash
-cp .env.example .env                    # then put your Gemini key in it
+cp .env.example .env                    # then put your OpenAI and/or Gemini key in it
 ```
 
 **Every command below is written as `python`, meaning the interpreter in the
@@ -191,7 +199,7 @@ curl -X POST localhost:8000/api/missions -H 'content-type: application/json' \
 curl -N localhost:8000/api/missions/m1-49e180/events
 ```
 
-### 1. Look, choose the pads, say what to do (needs a Gemini key)
+### 1. Look, choose the pads, say what to do (needs an LLM key)
 
 The whole thing, from one prompt:
 
@@ -214,7 +222,7 @@ mission> photograph the Tata Tea Museum from above, then fly over Munnar town
          and land at the landing pad       3. the mission, in plain English
 ```
 
-The mission then runs through the closed loop (see [5b](#5b-the-closed-loop-replan-in-the-air-needs-a-gemini-key)):
+The mission then runs through the closed loop (see [5b](#5b-the-closed-loop-replan-in-the-air-needs-an-llm-key)):
 Gemini plans it from your start pad to your landing pad, the verifier checks it
 (and asks for corrections if it fails), the simulator flies it, the monitor
 replans in the air if something gets in the way, and Gazebo opens on the
@@ -298,7 +306,7 @@ aircraft keeps overshooting into the wind. Push `--blind` past about 3 m/s and
 it never converges; it drifts downwind until the battery empties and lands
 wherever it is, which is realistic but writes a very large run file.
 
-### 5. Give it your own mission in English (needs a Gemini key)
+### 5. Give it your own mission in English (needs an LLM key)
 
 Hand it a sentence and watch the whole pipeline run: the planner decomposes the
 mission into named phases, the verifier checks them, the simulator flies them,
@@ -344,7 +352,7 @@ is the point of having a deterministic gate between the LLM and the aircraft.
 
 Or run the closed loop, which is the next section.
 
-### 5b. The closed loop: replan in the air (needs a Gemini key)
+### 5b. The closed loop: replan in the air (needs an LLM key)
 
 ```bash
 python -m waypoint.orchestrator.run_full \
@@ -395,7 +403,10 @@ What the loop does, and where it is written down:
   against the new obstacle and the battery budget that is left, then flying
   resumes on the same backend.
 - **Hard stops**: more than `--max-replans` (3) interruptions, a replacement that
-  never passes, or no battery budget left, and it lands where it is (`failsafe`).
+  never passes, or no battery budget left, and it comes down (`failsafe`): where
+  it is if the ground below is flat and clear, otherwise on the nearest clear
+  ground (the same survey the pads get, keeping clear of obstacles seen in
+  flight), crossing above every roof and hill on the way.
   A flat battery or a crash ends the mission too.
 
 Two files land in `runs/`: the run file Gazebo replays (with every plan that
@@ -423,6 +434,20 @@ python scripts/try_verifier.py --plan data/plans/north_field_and_tower.json \
     --shrink 0.3 --hazards                                      # verifier only, no tokens
 ```
 
+### 7. Run experiments (needs an LLM key)
+
+```bash
+python -m waypoint.experiments run --limit 5                 # a first look
+python -m waypoint.experiments run --all-conditions          # 20 missions x 4 ablation conditions
+python -m waypoint.experiments report experiments/runs/<stamp>
+```
+
+Each batch writes per-mission and per-replan CSVs, a summary, and plots of the
+verifier's catch rate, replan latency by fault type, how replans resolved, and
+path length against an unconstrained baseline. `--flat` and
+`--no-violation-feedback` are the ablations. [experiments/README.md](experiments/README.md)
+defines every metric and how to reproduce it.
+
 ### Troubleshooting
 
 | Symptom | Fix |
@@ -437,15 +462,19 @@ python scripts/try_verifier.py --plan data/plans/north_field_and_tower.json \
 
 ## Planner
 
-`plan(mission_text, constraints)` calls Gemini and is the only path to a `Plan`.
-The request pins the reply to `application/json` against a strict schema
-(`additionalProperties: false`, every field required), so the response either
-decodes and validates into the `Plan` model or raises:
+`plan(mission_text, constraints)` calls an LLM and is the only path to a `Plan`.
+OpenAI is tried first when `OPENAI_API_KEY` is set, then Gemini when its key
+is; with only one key, that provider is the planner. Both requests pin the
+reply to JSON against the same strict schema (`additionalProperties: false`,
+every field required; OpenAI's structured outputs in `strict` mode, Gemini's
+`application/json` response format), so the response either decodes and
+validates into the `Plan` model or raises:
 
 | Failure | Exception |
 | --- | --- |
 | Blocked, truncated, empty, non-JSON, or fenced-in-markdown response | `PlannerResponseError` |
-| Overload, quota, auth or network failure (after exhausting the model ladder) | `PlannerAPIError` |
+| Overload, quota, auth or network failure (after every provider has failed) | `PlannerAPIError` |
+| A refusal (OpenAI) | `PlannerResponseError` |
 | Tool arguments that don't form a valid `Plan` (bad enum, speed <= 0, empty plan, wrong types) | `PlanValidationError` |
 
 Both subclass `PlannerError`. There is no free-text fallback and no silent
@@ -454,15 +483,41 @@ default: a bad plan never reaches the verifier looking like a good one.
 `replan(mission_text, previous_plan, violation_report, constraints)` re-prompts
 with the rejected plan and the verifier's exact reasons, for the feedback loop.
 
-### Model ladder
+### Providers and model ladders
+
+Each provider has a ladder of models, and the providers form a chain:
+
+```
+openai:  COST=HIGH  gpt-5-mini -> gpt-4o-mini -> gpt-5-nano   (default)
+         COST=LOW   gpt-5-nano -> gpt-4.1-nano                (OPENAI_MODEL / OPENAI_MODELS override either)
+   then
+gemini:  waypoint/planner/config.py:MODEL_LADDER               (GEMINI_MODEL / GEMINI_MODELS)
+```
+
+Within a provider, an overloaded, rate-limited, missing (OpenAI 404) or
+unreachable model shifts down to the next rung. When a provider fails outright
+(every rung gone, or a bad key or bad request, which no cheaper model of the
+same provider would fix) the next provider takes over, with a warning on the
+console. A reply that is not a valid plan, or an OpenAI refusal, ends the
+attempt there: that is a planning failure, and asking someone else would hide
+it. Reasoning models (`gpt-5*`, `o*`) are asked for `reasoning_effort: low`
+(`OPENAI_REASONING_EFFORT` overrides it). Thinking is billed as output, but
+`low` is the only setting that planned well and in time: at `minimal`
+gpt-5-nano completed 38% of a 40-flight batch against 80% at `low`, and at
+`medium` it timed out on 31% of calls. The
+`client=` argument to `plan`/`replan` is a Gemini client and pins the request
+to Gemini.
 
 Gemini models go through spells of overload (`500 ... experiencing high demand`)
 and free-tier quota limits. Rather than failing the mission, the planner shifts
 down `waypoint/planner/config.py:MODEL_LADDER`:
 
 ```
-gemini-3.6-flash -> gemini-3.5-flash -> gemini-3.7-flash -> gemini-2.5-flash -> gemini-2.5-flash-lite
+gemini-3.7-flash -> gemini-3.6-flash -> gemini-3.5-flash -> gemini-3.5-flash-lite
+  -> gemini-3.1-flash-lite -> gemini-3.0-flash -> gemini-2.5-flash -> gemini-2.5-flash-lite
 ```
+
+`GEMINI_MODEL` in `.env` moves one model to the front without losing the rest.
 
 It shifts on 408/429/500/502/503/504 and on connection or timeout errors, and
 logs a warning each time. It does **not** shift on 400/401/403; a bad request
@@ -489,7 +544,7 @@ fix everything at once.
 | `GEOFENCE` | A waypoint outside the fence, or a leg that leaves a concave fence with both ends inside it |
 | `NO_FLY_ZONE` | A waypoint inside a no-fly polygon, or a leg that crosses one |
 | `ALTITUDE` | A waypoint outside `[min_altitude, max_altitude]` (z = 0 is excused for the launch waypoint and for a `LAND`) |
-| `MAX_VELOCITY` | A commanded speed over the limit, or a climb steep enough that the commanded *ground* speed implies an over-limit speed along the path |
+| `MAX_VELOCITY` | A commanded speed over the limit. Speed is along the flown path, as the simulator flies it; a steep climb is flown slower (capped at the climb rate), never faster |
 | `TURN_FEASIBILITY` | A corner sharper than the airframe can fly at the speed commanded through it |
 | `BATTERY` | A route whose linear energy estimate exceeds `battery_budget_pct` |
 | `MIN_SEPARATION` | A waypoint or leg inside an obstacle's keep-out radius (`obstacle.radius + min_separation`) |
@@ -789,11 +844,12 @@ past flight replays without re-simulating.
 ## Test
 
 ```bash
-.venv/bin/python -m pytest          # 311 tests, about 4 seconds
+.venv/bin/python -m pytest          # 389 tests, about 8 seconds
 ```
 
-Every test mocks the Gemini client; an autouse fixture replaces the real
-constructor with a tripwire, so a test that forgets to inject a fake client
+Every test mocks the planner's clients; autouse fixtures replace the real
+Gemini and OpenAI constructors with tripwires and clear `OPENAI_API_KEY` and the
+model overrides from the environment, so your `.env` cannot steer the suite, so a test that forgets to inject a fake client
 fails rather than dialling out. `tests/test_api.py` flies whole missions through
 the HTTP API using the bundled plans, so the pipeline, the event stream and the
 run files are covered without a key and without a network.

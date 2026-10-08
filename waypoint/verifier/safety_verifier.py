@@ -56,7 +56,7 @@ def verify(
     violations: list[Violation] = [
         *check_geofence(flat, legs, constraints, config),
         *check_no_fly_zones(flat, legs, constraints),
-        *check_altitude(flat, constraints),
+        *check_altitude(flat, constraints, world),
         *check_velocity(legs, constraints),
         *check_turns(flat, config),
         *check_battery(legs, flat, constraints, config),

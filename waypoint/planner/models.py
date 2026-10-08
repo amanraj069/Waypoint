@@ -18,7 +18,7 @@ class Waypoint(BaseModel):
     x: float
     y: float
     z: float
-    speed: float = Field(gt=0, description="Commanded ground speed in m/s.")
+    speed: float = Field(gt=0, description="Commanded speed along the path to this waypoint, in m/s.")
     action: Action = Action.MOVE
 
 

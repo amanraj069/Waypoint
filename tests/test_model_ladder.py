@@ -10,15 +10,28 @@ from conftest import VALID_PAYLOAD, SequenceClient, http_error, json_response
 from waypoint.planner import MissionConstraints, PlannerAPIError, plan
 from waypoint.planner.config import MODEL_LADDER, get_model, get_model_ladder
 
+# Only the two tests below pin the configured order; every behaviour test reads
+# the ladder by position, so reordering it (or setting GEMINI_MODEL in .env,
+# which the suite ignores) changes what they expect without breaking them.
+FIRST, SECOND, THIRD, FOURTH = MODEL_LADDER[:4]
 
-def test_the_ladder_starts_at_36_flash():
-    assert MODEL_LADDER[0] == "gemini-3.6-flash"
-    assert get_model() == "gemini-3.6-flash"
+
+def test_the_ladder_starts_at_37_flash():
+    assert MODEL_LADDER[0] == "gemini-3.7-flash"
+    assert get_model() == "gemini-3.7-flash"
 
 
 def test_the_ladder_is_the_configured_preference_order():
-    assert MODEL_LADDER[:3] == ("gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.7-flash")
-    assert MODEL_LADDER[-1] == "gemini-2.5-flash-lite"
+    assert MODEL_LADDER == (
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-3.0-flash",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+    )
 
 
 def test_an_override_leads_the_ladder_without_losing_fallbacks(monkeypatch):
@@ -38,7 +51,7 @@ def test_the_happy_path_never_leaves_the_first_model(constraints):
 
     plan("survey the north field", constraints, client=client)
 
-    assert client.models == ["gemini-3.6-flash"]
+    assert client.models == [FIRST]
 
 
 @pytest.mark.parametrize("status", [429, 500, 503])
@@ -48,7 +61,7 @@ def test_an_overloaded_model_shifts_down_one_rung(status, constraints):
 
     result = plan("survey the north field", constraints, client=client)
 
-    assert client.models == ["gemini-3.6-flash", "gemini-3.5-flash"]
+    assert client.models == [FIRST, SECOND]
     assert result.subtasks
 
 
@@ -59,12 +72,7 @@ def test_it_keeps_shifting_until_a_model_answers(constraints):
 
     plan("survey the north field", constraints, client=client)
 
-    assert client.models == [
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
-        "gemini-3.7-flash",
-        "gemini-2.5-flash",
-    ]
+    assert client.models == [FIRST, SECOND, THIRD, FOURTH]
 
 
 def test_exhausting_the_ladder_raises_with_every_attempt_listed(constraints):
@@ -81,13 +89,13 @@ def test_exhausting_the_ladder_raises_with_every_attempt_listed(constraints):
 
 @pytest.mark.parametrize("status", [400, 401, 403])
 def test_our_own_errors_fail_fast_without_burning_the_ladder(status, constraints):
-    """A bad request or bad key repeats on every model -- don't spend five calls on it."""
+    """A bad request or bad key repeats on every model -- don't spend eight calls on it."""
     client = SequenceClient(http_error(status))
 
     with pytest.raises(PlannerAPIError):
         plan("survey the north field", constraints, client=client)
 
-    assert client.models == ["gemini-3.6-flash"]
+    assert client.models == [FIRST]
 
 
 def test_a_connection_error_shifts_too(constraints):
@@ -101,7 +109,7 @@ def test_a_connection_error_shifts_too(constraints):
 
     plan("survey the north field", constraints, client=client)
 
-    assert client.models == ["gemini-3.6-flash", "gemini-3.5-flash"]
+    assert client.models == [FIRST, SECOND]
 
 
 def test_a_shift_is_logged_so_the_operator_sees_it(constraints, caplog):
@@ -110,8 +118,8 @@ def test_a_shift_is_logged_so_the_operator_sees_it(constraints, caplog):
     with caplog.at_level(logging.WARNING, logger="waypoint.planner.llm_planner"):
         plan("survey the north field", constraints, client=client)
 
-    assert "gemini-3.6-flash unavailable" in caplog.text
-    assert "shifting down to gemini-3.5-flash" in caplog.text
+    assert f"{FIRST} unavailable" in caplog.text
+    assert f"shifting down to {SECOND}" in caplog.text
 
 
 def test_a_malformed_plan_does_not_shift(constraints):
@@ -123,4 +131,4 @@ def test_a_malformed_plan_does_not_shift(constraints):
     with pytest.raises(PlanValidationError):
         plan("survey the north field", constraints, client=client)
 
-    assert client.models == ["gemini-3.6-flash"]
+    assert client.models == [FIRST]

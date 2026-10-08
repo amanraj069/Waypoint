@@ -98,6 +98,19 @@ def no_network(monkeypatch):
 
     monkeypatch.setattr(genai, "Client", tripwire)
     monkeypatch.setattr("waypoint.planner.llm_planner._client", None)
+    monkeypatch.setattr("waypoint.planner.llm_planner._openai_client", None)
+    monkeypatch.setattr("waypoint.planner.llm_planner.get_openai_client", tripwire)
+
+
+@pytest.fixture(autouse=True)
+def isolated_planner_env(monkeypatch):
+    """The developer's .env must not steer the suite: no OpenAI key (so planning
+    is Gemini unless a test opts in), and no model overrides on either ladder."""
+    for name in (
+        "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_MODELS", "GEMINI_MODEL", "GEMINI_MODELS",
+        "COST", "OPENAI_REASONING_EFFORT",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True)

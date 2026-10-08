@@ -13,9 +13,11 @@ that decided it, so a refusal can say why.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 
 from pydantic import BaseModel, Field
 
+from waypoint.planner.models import Obstacle
 from waypoint.world.models import World
 
 #: The aircraft's footprint: how far from the centre the skids reach.
@@ -107,6 +109,8 @@ def find(
     radius: float = PAD_RADIUS,
     search: float = 120.0,
     step: float = 8.0,
+    avoid: Sequence[Obstacle] = (),
+    clearance: float = 0.0,
 ) -> Site:
     """The nearest patch of ground you could land on, starting where asked.
 
@@ -114,10 +118,20 @@ def find(
     and returns the first spot that will, with `moved` set -- and if nothing
     within `search` works, it returns the original survey, still unusable, so
     the caller can say what was wrong rather than silently landing somewhere
-    surprising.
+    surprising. `avoid` are obstacles a site must also stand `clearance` metres
+    clear of (beyond their radius), such as ones that appeared mid-flight.
     """
+
+    def blocker(site: Site) -> str | None:
+        for obstacle in avoid:
+            if math.hypot(site.x - obstacle.x, site.y - obstacle.y) < obstacle.radius + clearance:
+                return obstacle.name
+        return None
+
     here = survey(world, x, y, radius)
-    if here.usable or world is None:
+    if (name := blocker(here)) and here.obstructed is None:
+        here = here.model_copy(update={"obstructed": name})
+    if here.usable or (world is None and not avoid):
         return here
 
     rings = int(search / step)
@@ -127,6 +141,6 @@ def find(
         for index in range(points):
             angle = index * math.tau / points
             site = survey(world, x + distance * math.cos(angle), y + distance * math.sin(angle), radius)
-            if site.usable:
+            if site.usable and blocker(site) is None:
                 return site.model_copy(update={"moved": round(distance, 1)})
     return here

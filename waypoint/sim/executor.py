@@ -236,10 +236,13 @@ class Executor:
     def _land(self) -> Iterator[UAVState]:
         """Descend to the ground wherever we are and settle."""
         self._landing = True
-        target = (self.state.x, self.state.y, 0.0)
         started = self.state.timestamp
         ground = self.world.elevation_at(self.state.x, self.state.y) if self.world else 0.0
-        target = (self.state.x, self.state.y, ground)
+        # Straight down from where it believes it is. The controller steers on
+        # the reported position, so aiming at the true one under a GPS offset
+        # would slide the aircraft sideways by the whole offset on the way down.
+        rx, ry, _ = self.state.reported_position
+        target = (rx, ry, ground + self._gps_offset[2])
         while (
             self.state.z > ground + 0.05
             and self.state.timestamp - started < self.config.max_leg_seconds

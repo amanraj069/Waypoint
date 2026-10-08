@@ -297,22 +297,43 @@ def test_commanded_speed_above_the_limit_is_caught(constraints):
     assert "10 m/s limit" in violation.description
 
 
-def test_a_steep_climb_implies_a_speed_above_the_limit(constraints):
-    """The commanded speed is legal, but it is a *ground* speed on a steep leg."""
-    plan = plan_of(
+def steep_climb():
+    """80 m up over 5 m across, commanded at 9 m/s (under the 10 m/s limit)."""
+    return plan_of(
         wp(0, 0, 20, 3),
         wp(5, 0, 100, 9),
         wp(100, 0, 100, 4),
         wp(0, 0, 20, 4),
         wp(0, 0, 0, 2, Action.LAND),
     )
-    result = verify(plan, constraints, NO_TURN_MODEL)
 
-    assert types_of(result) == [ViolationType.MAX_VELOCITY]
-    violation = result.violations[0]
-    assert violation.waypoint_index == 1
-    assert "implies" in violation.description
-    assert "Slow this waypoint" in violation.description
+
+def test_a_steep_climb_at_a_legal_speed_is_fine(constraints):
+    """Speed is along the path, so a steep leg is not a fast one."""
+    result = verify(steep_climb(), constraints, NO_TURN_MODEL)
+    assert ViolationType.MAX_VELOCITY not in types_of(result)
+
+
+def test_the_verifier_and_the_simulator_agree_on_what_speed_means(constraints):
+    """The aircraft never flies faster than the speeds it was commanded, climbs included.
+
+    This is what lets the velocity check be the commanded speed alone. If the
+    simulator ever flew a steep leg faster than commanded, the check would be
+    unsafe and this would fail. (Entering a slower leg it is still braking from
+    the one before, so the bound is the faster of the two.)
+    """
+    from waypoint.sim import Executor
+
+    plan = steep_climb()
+    states = Executor(plan).run_to_list()
+    commanded = [wp.speed for wp in plan.waypoints()]
+    climb = [s for s in states if s.target_index == 1]
+    assert max(s.vz for s in climb) == pytest.approx(4.0, abs=0.05)  # capped at the climb rate
+    assert max(s.velocity for s in climb) < commanded[1]  # so the steep leg is slower than commanded
+    for state in states:
+        i = state.target_index
+        if i is not None and i < len(commanded):
+            assert state.velocity <= max(commanded[max(i - 1, 0)], commanded[i]) + 0.1
 
 
 def test_a_shallow_climb_at_a_legal_speed_is_fine(constraints):
