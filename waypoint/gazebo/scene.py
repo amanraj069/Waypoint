@@ -87,8 +87,14 @@ class Scene:
     late: list[LateObstacle] = field(default_factory=list)
 
 
-def write_scene(run: dict, out_dir: Path) -> Scene:
-    """Write `world.sdf` and `terrain.obj`/`.mtl` for a run file's contents."""
+def write_scene(run: dict, out_dir: Path, *, px4: bool = False) -> Scene:
+    """Write `world.sdf` and `terrain.obj`/`.mtl` for a run file's contents.
+
+    `px4=True` writes the same scene as a world PX4 SITL can fly in: gravity,
+    real physics, the sensor systems PX4's airframe needs, and ground the
+    aircraft can stand on. The aircraft itself is left out, because PX4 spawns
+    its own.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     world = World.model_validate(run["world"]) if run.get("world") else World()
     constraints = run.get("constraints") or {}
@@ -100,13 +106,13 @@ def write_scene(run: dict, out_dir: Path) -> Scene:
 
     write_terrain(world, out_dir, _extent(world, constraints, run.get("waypoints") or []))
     models = [
-        _terrain_model(),
+        _terrain_model(collide=px4, flat=world.terrain is None),
         *_buildings(world),
         _trees(world),
         *_pads(world, home, run.get("ticks") or [], pads.get("landing")),
         _envelope(world, constraints),
         _route(world, _on_ground(world, home), run.get("waypoints") or []),
-        _uav(world, home),
+        "" if px4 else _uav(world, home),
     ]
     late = []
     for index, record in enumerate(run.get("obstacles") or []):
@@ -128,7 +134,7 @@ def write_scene(run: dict, out_dir: Path) -> Scene:
             late.append(LateObstacle(t=segment["t"], sdf=_sdf_document(model)))
 
     sdf = out_dir / "world.sdf"
-    sdf.write_text(_world_document(world, [m for m in models if m]))
+    sdf.write_text(_world_document(world, [m for m in models if m], px4=px4))
     return Scene(sdf=sdf, late=late)
 
 
@@ -248,7 +254,22 @@ def _relief_kind(world: World) -> str:
     return "base" if world.buildings or world.ground else "lawn"
 
 
-def _terrain_model() -> str:
+def _terrain_model(*, collide: bool = False, flat: bool = True) -> str:
+    """The ground mesh; with `collide`, also something to stand on.
+
+    Flat ground collides as a plane, which physics handles best; relief
+    collides as the same mesh that is drawn.
+    """
+    collision = ""
+    if collide:
+        shape = (
+            "<plane><normal>0 0 1</normal><size>10000 10000</size></plane>"
+            if flat else "<mesh><uri>terrain.obj</uri></mesh>"
+        )
+        collision = f"""
+        <collision name="ground">
+          <geometry>{shape}</geometry>
+        </collision>"""
     return f"""
     <model name="terrain">
       <static>true</static>
@@ -256,7 +277,7 @@ def _terrain_model() -> str:
         <visual name="mesh">
           <cast_shadows>false</cast_shadows>
           <geometry><mesh><uri>terrain.obj</uri></mesh></geometry>
-        </visual>
+        </visual>{collision}
       </link>
     </model>"""
 
@@ -508,22 +529,56 @@ def _uav(world: World, home: tuple) -> str:
 # -- the document ---------------------------------------------------------------------
 
 
-def _world_document(world: World, models: list[str]) -> str:
+#: Where PX4's own worlds put the origin, for a world that is not anywhere real.
+#: PX4 needs a latitude and longitude, because its GPS is simulated from them.
+PX4_ORIGIN = (47.397971057728974, 8.546163739800146)
+
+#: The systems PX4's airframe needs: its gz_bridge reads the IMU, barometer,
+#: magnetometer and GPS, and ApplyLinkWrench is how wind reaches the aircraft.
+#: (PX4's own server.config also loads optical-flow and camera plugins, which
+#: nothing here uses.)
+PX4_SYSTEMS = """
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-contact-system" name="gz::sim::systems::Contact"/>
+    <plugin filename="gz-sim-imu-system" name="gz::sim::systems::Imu"/>
+    <plugin filename="gz-sim-air-pressure-system" name="gz::sim::systems::AirPressure"/>
+    <plugin filename="gz-sim-air-speed-system" name="gz::sim::systems::AirSpeed"/>
+    <plugin filename="gz-sim-apply-link-wrench-system" name="gz::sim::systems::ApplyLinkWrench"/>
+    <plugin filename="gz-sim-navsat-system" name="gz::sim::systems::NavSat"/>
+    <plugin filename="gz-sim-magnetometer-system" name="gz::sim::systems::Magnetometer"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>"""
+
+
+def _world_document(world: World, models: list[str], *, px4: bool = False) -> str:
     geo = ""
-    if world.origin_lat is not None and world.origin_lon is not None:
+    origin = (world.origin_lat, world.origin_lon)
+    if px4 and None in origin:
+        origin = PX4_ORIGIN
+    if None not in origin:
         geo = f"""
     <spherical_coordinates>
       <surface_model>EARTH_WGS84</surface_model>
       <world_frame_orientation>ENU</world_frame_orientation>
-      <latitude_deg>{world.origin_lat}</latitude_deg>
-      <longitude_deg>{world.origin_lon}</longitude_deg>
+      <latitude_deg>{origin[0]}</latitude_deg>
+      <longitude_deg>{origin[1]}</longitude_deg>
       <elevation>0</elevation>
       <heading_deg>0</heading_deg>
     </spherical_coordinates>"""
-    return f"""<?xml version="1.0"?>
-<!-- {escape(world.name)}: written by gazebo/scene.py, regenerated on every launch. -->
-<sdf version="1.9">
-  <world name="{WORLD_NAME}">
+    if px4:
+        physics = f"""
+    <gravity>0 0 -9.8</gravity>
+    <magnetic_field>6e-06 2.3e-05 -4.2e-05</magnetic_field>
+    <atmosphere type="adiabatic"/>
+    <physics name="4ms" type="ignored">
+      <max_step_size>0.004</max_step_size>
+      <real_time_factor>1</real_time_factor>
+    </physics>{PX4_SYSTEMS}"""
+    else:
+        physics = """
     <gravity>0 0 0</gravity>
     <physics name="playback" type="ignored">
       <max_step_size>0.01</max_step_size>
@@ -531,7 +586,12 @@ def _world_document(world: World, models: list[str]) -> str:
     </physics>
     <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
     <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
-    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>"""
+    return f"""<?xml version="1.0"?>
+<!-- {escape(world.name)}: written by gazebo/scene.py, regenerated on every launch. -->
+<sdf version="1.9">
+  <world name="{WORLD_NAME}">
+{physics}
     <scene>
       <ambient>0.55 0.55 0.55 1</ambient>
       <background>0.74 0.82 0.9 1</background>

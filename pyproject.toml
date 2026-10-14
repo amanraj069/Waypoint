@@ -6,6 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.7",
     "google-genai>=2.23",
+    "openai>=1.60",         # the planner tries OpenAI first when OPENAI_API_KEY is set
     "python-dotenv>=1.0",
     "plotly>=6.0",
     "shapely>=2.0",
@@ -20,6 +21,12 @@ dev = [
 api = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
+]
+experiments = [
+    "matplotlib>=3.8",      # the batch harness's plots; CSVs and summaries work without it
+]
+px4 = [
+    "pymavlink>=2.4.40",    # --backend px4: MAVLink to PX4 SITL (PX4 and Gazebo installed separately)
 ]
 
 [project.scripts]

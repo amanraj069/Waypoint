@@ -226,11 +226,22 @@ def check_no_fly_zones(
     return violations
 
 
-def check_altitude(flat: list[FlatWaypoint], constraints: MissionConstraints) -> list[Violation]:
-    """Every airborne waypoint must sit inside the altitude envelope."""
+def check_altitude(
+    flat: list[FlatWaypoint], constraints: MissionConstraints, world: World | None = None
+) -> list[Violation]:
+    """Every airborne waypoint must sit inside the altitude envelope.
+
+    In a world with terrain, a launch or landing waypoint sits at the height of
+    the ground under it, which can be below the datum (a lawn 2.7 m lower than
+    the origin). The floor does not apply to those: TERRAIN and LANDING judge
+    them against the actual ground, which this check cannot see. The ceiling
+    still applies to every waypoint.
+    """
     violations: list[Violation] = []
     for fw in flat:
         z = fw.wp.z
+        if world is not None and (fw.index == 0 or fw.wp.action is Action.LAND) and z < constraints.min_altitude:
+            continue
         if z < 0:
             violations.append(
                 Violation(
@@ -278,7 +289,14 @@ def check_altitude(flat: list[FlatWaypoint], constraints: MissionConstraints) ->
 
 
 def check_velocity(legs: list[Leg], constraints: MissionConstraints) -> list[Violation]:
-    """Commanded speed, and the speed a steep leg implies, must stay under the limit."""
+    """No waypoint may command a speed over the limit.
+
+    A waypoint's speed is its speed along the flown path, which is how the
+    aircraft flies it: the controller points the commanded speed straight at the
+    waypoint and caps the vertical part at the airframe's climb rate, so a steep
+    climb is flown slower than commanded, never faster. A steep leg is therefore
+    slow, not fast, and the commanded speed is the whole check.
+    """
     limit = constraints.max_velocity
     violations: list[Violation] = []
     for leg in legs:
@@ -292,30 +310,6 @@ def check_velocity(legs: list[Leg], constraints: MissionConstraints) -> list[Vio
                         f"{leg.end.label} commands {wp.speed:g} m/s, which is "
                         f"{wp.speed - limit:.1f} m/s above the {limit:g} m/s limit. Reduce "
                         f"its speed to at most {limit:g} m/s."
-                    ),
-                    severity=Severity.ERROR,
-                )
-            )
-            continue
-        # A steep climb flown at the commanded *ground* speed means a higher
-        # speed along the actual path.
-        ground = leg.length_2d
-        if ground <= EPS:
-            continue
-        implied = wp.speed * leg.length_3d / ground
-        if implied > limit + EPS:
-            climb = abs(leg.end.wp.z - leg.start[2])
-            safe = wp.speed * limit / implied
-            violations.append(
-                Violation(
-                    type=ViolationType.MAX_VELOCITY,
-                    waypoint_index=leg.index,
-                    description=(
-                        f"{leg.label} climbs {climb:.1f} m over only {ground:.1f} m of "
-                        f"ground, so the commanded {wp.speed:g} m/s ground speed implies "
-                        f"{implied:.1f} m/s along the flown path, above the {limit:g} m/s "
-                        f"limit. Slow this waypoint to at most {safe:.1f} m/s or spread the "
-                        "climb over a longer leg."
                     ),
                     severity=Severity.ERROR,
                 )

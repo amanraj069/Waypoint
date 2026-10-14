@@ -12,7 +12,8 @@ simulator for PX4 SITL + Gazebo is a change of `--backend`, not of the loop:
 
 One backend is one flight. `run` always continues from the aircraft's current
 state, so pausing is simply to stop iterating, and resuming is `run` again with
-the new plan. Every backend shares the frame (local ENU metres from the world
+the new plan. `close()` releases whatever the backend started (PX4 and Gazebo
+for `px4`); whoever made the backend closes it. Every backend shares the frame (local ENU metres from the world
 origin), the obstacle model (`planner.models.Obstacle`) and the telemetry
 (`sim.state.UAVState`), so their runs are comparable and write the same file.
 """
@@ -91,6 +92,9 @@ class ExecutorBackend(ABC):
         """What to record about this backend, beyond its name."""
         return {"name": self.name}
 
+    def close(self) -> None:
+        """Stop anything the flight started. Nothing to do for an in-process backend."""
+
 
 BACKENDS = ("custom", "px4")
 
@@ -98,16 +102,20 @@ BACKENDS = ("custom", "px4")
 def make_backend(name: str, **scenario) -> ExecutorBackend:
     """A backend by the name the CLI uses.
 
-    `custom` is the built-in simulator. `px4` is reserved for PX4 SITL with
-    Gazebo as its physics, and is not built yet.
+    `custom` is the built-in simulator. `px4` flies PX4 SITL in Gazebo (see
+    `waypoint.px4`); it raises BackendError here, before anything flies, when
+    PX4, Gazebo or pymavlink is missing.
     """
     if name == "custom":
         from waypoint.sim.backend import CustomSimBackend  # noqa: PLC0415
 
         return CustomSimBackend(**scenario)
     if name == "px4":
-        raise BackendError(
-            "the px4 backend is reserved but not built yet: it would drive PX4 SITL "
-            "with Gazebo as its physics. Use --backend custom."
-        )
+        from waypoint.px4.link import mavutil  # noqa: PLC0415
+
+        if mavutil is None:
+            raise BackendError('the px4 backend needs pymavlink: pip install -e ".[px4]"')
+        from waypoint.px4.backend import Px4Backend  # noqa: PLC0415
+
+        return Px4Backend(**scenario)
     raise BackendError(f"unknown backend {name!r}; choose one of {', '.join(BACKENDS)}")

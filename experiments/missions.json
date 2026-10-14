@@ -1,0 +1,130 @@
+{
+  "description": "Twenty missions across open space and the four bundled places. Each mixes a fault schedule (named or randomized) and some ask for things the envelope makes hard, so the verifier has something to catch.",
+  "missions": [
+    {
+      "id": "open_north_field",
+      "mission": "survey the north field: photograph the four corners of a 60 m square field 80 m north of base, then come home and land",
+      "faults": "crane_ahead"
+    },
+    {
+      "id": "open_tower_inspection",
+      "mission": "inspect the comms tower 120 m east of base: photograph it from the north, east and south at 30 m, then return and land",
+      "faults": "random"
+    },
+    {
+      "id": "open_perimeter",
+      "mission": "fly a lap of the whole geofence perimeter about 10 m inside the fence at 40 m, photographing each corner, then land at base",
+      "faults": "storm"
+    },
+    {
+      "id": "open_far_point",
+      "mission": "fly to the point 1500 m north of base, photograph it, and come back",
+      "faults": "none"
+    },
+    {
+      "id": "open_high_overwatch",
+      "mission": "climb to 200 m above base and hover for a panoramic photo, then land",
+      "faults": "random"
+    },
+    {
+      "id": "lodhi_bara_gumbad",
+      "mission": "photograph Bara Gumbad from two sides, then come home",
+      "world": "lodhi",
+      "faults": "crane_ahead"
+    },
+    {
+      "id": "lodhi_tomb_tour",
+      "mission": "take a round of the garden: photograph Bara Gumbad, Sheesh Gumbad and Sikander Lodi's Tomb, then fly low over the lake and land at the start",
+      "world": "lodhi",
+      "faults": "random"
+    },
+    {
+      "id": "lodhi_safdarjung",
+      "mission": "photograph Safdarjung's Tomb from 30 m up, directly over the dome",
+      "world": "lodhi",
+      "faults": "none"
+    },
+    {
+      "id": "lodhi_grove_crossing",
+      "mission": "fly straight through the old grove at 8 m to photograph the trees from inside, then return",
+      "world": "lodhi",
+      "start": "the Lodhi Road gate",
+      "faults": "gps_slip"
+    },
+    {
+      "id": "lodhi_glass_house_drop",
+      "mission": "take off from the Bonsai Park, photograph the Glass House and the rose garden, and land on the east lawn",
+      "world": "lodhi",
+      "start": "the Bonsai Park",
+      "land": "the east lawn",
+      "faults": "random"
+    },
+    {
+      "id": "delhi_india_gate",
+      "mission": "orbit India Gate once at 60 m, photographing it from four sides, then land back at the lawns",
+      "world": "delhi",
+      "faults": "crane_ahead"
+    },
+    {
+      "id": "delhi_vista_run",
+      "mission": "fly the length of Kartavya Path from India Gate to Rashtrapati Bhavan, photograph the North and South Blocks on the way, and come back",
+      "world": "delhi",
+      "faults": "storm"
+    },
+    {
+      "id": "delhi_museum_to_stadium",
+      "mission": "photograph the National Museum, then the National Stadium, and land at the stadium",
+      "world": "delhi",
+      "land": "the National Stadium",
+      "faults": "random"
+    },
+    {
+      "id": "chowk_street_run",
+      "mission": "fly down Chandni Chowk below the rooftops to the Red Fort, photograph the Lahori Gate, then come back",
+      "world": "chowk",
+      "faults": "gps_slip",
+      "wind": "3,0,0"
+    },
+    {
+      "id": "chowk_jama_masjid",
+      "mission": "photograph the Jama Masjid from above its minarets, then the Sunehri Masjid, and return",
+      "world": "chowk",
+      "faults": "random"
+    },
+    {
+      "id": "chowk_station_delivery",
+      "mission": "take off from Fatehpuri Masjid, pass over Khari Baoli and land at the Old Delhi railway station",
+      "world": "chowk",
+      "start": "Fatehpuri Masjid",
+      "land": "the Old Delhi railway station",
+      "faults": "crane_ahead"
+    },
+    {
+      "id": "munnar_tea_museum",
+      "mission": "photograph the Tata Tea Museum from above, then fly over Munnar town and land at the start",
+      "world": "munnar",
+      "faults": "random"
+    },
+    {
+      "id": "munnar_dam_inspection",
+      "mission": "inspect the Mattupetty dam: photograph its face from three points along it, then make a low pass over Mattupetty Lake and come home",
+      "world": "munnar",
+      "faults": "storm",
+      "wind": "0,4,0"
+    },
+    {
+      "id": "munnar_echo_point",
+      "mission": "take off from the Kanan Devan tea estate and land at Echo Point, photographing Chokramudi on the way",
+      "world": "munnar",
+      "start": "the Kanan Devan tea estate",
+      "land": "Echo Point",
+      "faults": "random"
+    },
+    {
+      "id": "munnar_anamudi",
+      "mission": "fly to the summit of Anamudi, photograph the view, and return",
+      "world": "munnar",
+      "faults": "gps_slip"
+    }
+  ]
+}

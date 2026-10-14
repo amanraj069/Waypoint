@@ -18,9 +18,11 @@ from waypoint.planner.models import (
     Waypoint,
     render_polygon,
 )
+from waypoint.planner.prompts import DEFAULT_OPTIONS, PlannerOptions
 
 __all__ = [
     "DEFAULT_CONSTRAINTS",
+    "DEFAULT_OPTIONS",
     "Action",
     "GeoPoint",
     "MissionConstraints",
@@ -29,6 +31,7 @@ __all__ = [
     "PlanValidationError",
     "PlannerAPIError",
     "PlannerError",
+    "PlannerOptions",
     "PlannerResponseError",
     "SubTask",
     "Waypoint",

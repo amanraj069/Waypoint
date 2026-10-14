@@ -358,8 +358,9 @@ def test_the_loop_only_needs_the_backend_interface(tmp_path):
     assert len(relay.plans) == 2  # the first plan, then the detour, on the same flight
 
 
-def test_px4_is_reserved():
-    with pytest.raises(BackendError, match="reserved"):
+def test_px4_without_an_install_fails_before_anything_flies(monkeypatch, tmp_path):
+    monkeypatch.setenv("WAYPOINT_PX4_DIR", str(tmp_path / "no-px4-here"))
+    with pytest.raises(BackendError, match="make px4_sitl"):
         make_backend("px4")
 
 

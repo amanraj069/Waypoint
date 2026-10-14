@@ -15,6 +15,7 @@ itself goes into the usual run file, which Gazebo replays.
 from __future__ import annotations
 
 import itertools
+import math
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -35,12 +36,15 @@ from waypoint.planner.models import Action, Obstacle, SubTask, Waypoint
 from waypoint.sim import NO_FAULTS, FaultSchedule, SimConfig, UAVState, Wind
 from waypoint.verifier import VerificationResult, verify
 from waypoint.verifier.models import DEFAULT_CONFIG as VERIFIER_DEFAULTS
+from waypoint.world.landing import find as find_site
 from waypoint.world.models import World
 
 #: planner(mission, constraints, *, world=...) -> Plan
 Planner = Callable[..., Plan]
 #: replanner(mission, previous_plan, violations, constraints, *, world=, home=, landing=, situation=) -> Plan
 Replanner = Callable[..., Plan]
+#: verifier(plan, constraints, *, config=, world=) -> VerificationResult
+Verifier = Callable[..., VerificationResult]
 
 # Sentinel so the default is resolved against the module attribute at call time
 # (a plain default would bind RUNS_DIR at import and ignore reconfiguration).
@@ -49,6 +53,7 @@ _UNSET: Any = object()
 # The simulator ticks at 10 Hz; printing every tick would bury the operator.
 PRINT_EVERY_SECONDS = 1.0
 FAILSAFE_DESCENT = 1.5
+FAILSAFE_TRANSIT = 4.0
 
 
 @dataclass
@@ -155,6 +160,8 @@ def run_mission(
     check_every: int = 1,
     feedback_config: FeedbackConfig | None = None,
     perception: PerceptionSource | None = None,
+    verifier: Verifier | None = None,
+    adapt: bool = True,
     verbose: bool = True,
     print_every: float = PRINT_EVERY_SECONDS,
     runs_dir: Path | None = _UNSET,
@@ -169,7 +176,12 @@ def run_mission(
     by between feedback checks. `perception` is how the aircraft sees what is
     around it; it defaults to `SymbolicPerceptionSource` over the backend.
     `planner` and `replanner` default to the LLM and are injectable, so the
-    loop runs deterministically in tests.
+    loop runs deterministically in tests. `verifier` defaults to the real
+    `verify`; the experiment harness swaps it only to fly an unconstrained
+    baseline, and the log records which one gated the mission. `adapt=False`
+    flies the plan without the in-flight monitor: nothing replans, so the
+    flight is the plan, faults and all (a baseline that costs no planner calls
+    once it is airborne).
 
     Returns the `MissionLog`; its `report` holds the flight, and unless
     `runs_dir` is None the run file and the JSONL log are written there.
@@ -179,6 +191,7 @@ def run_mission(
     backend = backend or make_backend("custom", world=world)
     planner = planner or default_planner
     replanner = replanner or default_replanner
+    verifier = verifier or verify
     perception = perception or SymbolicPerceptionSource(backend)
     runs_dir = RUNS_DIR if runs_dir is _UNSET else runs_dir
     when = datetime.now()
@@ -194,6 +207,8 @@ def run_mission(
         backend=backend.name,
         backend_detail=backend.describe(),
         perception=perception.name,
+        verifier=getattr(verifier, "__name__", type(verifier).__name__),
+        adapt=adapt,
         world=world.name if world else None,
         home=home,
         landing=landing,
@@ -238,7 +253,7 @@ def run_mission(
             )
             out.plan(candidate)
             out.phase("VERIFYING" if attempt == 0 else "RE-VERIFYING", f"plan {plan_id}")
-            result = verify(candidate, against, config=config, world=world)
+            result = verifier(candidate, against, config=config, world=world)
             mlog.add(
                 "verification",
                 plan_id=plan_id,
@@ -350,24 +365,22 @@ def run_mission(
         return None
 
     def failsafe(why: str) -> None:
-        """No safe plan in the air: come straight down where we are."""
+        """No safe plan in the air: land on the nearest clear ground, or here if it is clear."""
         here = backend.state
         # The reported position, because that is what the controller steers on:
         # aiming at the true one under a drifting GPS would fly it sideways.
-        x, y, _ = here.reported_position
-        mlog.add("failsafe", t=here.timestamp, reason=why, position=[x, y, here.z])
-        out.phase("FAILSAFE", f"{why}; landing where it is")
-        down = Plan(
-            mission_text=mission_text,
-            subtasks=[SubTask(name="failsafe_land", waypoints=[
-                Waypoint(x=x, y=y, z=here.ground, speed=FAILSAFE_DESCENT, action=Action.LAND)
-            ])],
+        x, y, z = here.reported_position
+        waypoints, where = failsafe_route(
+            world, (x, y, z), here.ground, known, current_constraints.min_separation
         )
+        mlog.add("failsafe", t=here.timestamp, reason=why, position=[x, y, here.z], landing=where)
+        out.phase("FAILSAFE", f"{why}; {where}")
+        down = Plan(mission_text=mission_text, subtasks=[SubTask(name="failsafe_land", waypoints=waypoints)])
         report.plans.append(_segment(next(ids), "failsafe", down, t=here.timestamp, start=(x, y, here.z), why=why))
         fly(down, watch=False)
 
     while True:
-        trigger = fly(current, watch=True)
+        trigger = fly(current, watch=adapt)
         if trigger is None:
             break
 
@@ -527,6 +540,58 @@ def _snapshot(
         route_start=route_start,
         perception=tuple(perceived),
     )
+
+
+#: How far above everything in the way the failsafe crosses to its landing spot.
+FAILSAFE_CLEARANCE = 10.0
+
+
+def failsafe_route(
+    world: World | None,
+    position: tuple[float, float, float],
+    ground: float,
+    obstacles: list[Obstacle],
+    separation: float = 0.0,
+) -> tuple[list[Waypoint], str]:
+    """Where an emergency landing goes, and how it gets there.
+
+    Straight down when the ground below is flat and clear. Otherwise to the
+    nearest spot that is (the same survey the launch and landing pads get),
+    crossing at a height that clears every roof, hillside and known obstacle
+    on the way. Coming straight down onto a roof or a crane is a crash, not a
+    landing. If nothing within reach will do, it comes down where it is.
+    """
+    x, y, z = position
+    site = find_site(world, x, y, avoid=obstacles, clearance=separation)
+    if not site.usable:
+        return [Waypoint(x=x, y=y, z=ground, speed=FAILSAFE_DESCENT, action=Action.LAND)], (
+            f"no clear ground within reach ({site.why_not()}); landing where it is"
+        )
+    if not site.moved:
+        return [Waypoint(x=x, y=y, z=site.elevation, speed=FAILSAFE_DESCENT, action=Action.LAND)], (
+            "landing where it is"
+        )
+    cruise = max(z, _highest_between(world, (x, y), (site.x, site.y), obstacles) + FAILSAFE_CLEARANCE)
+    route = []
+    if cruise > z + 0.5:
+        route.append(Waypoint(x=x, y=y, z=cruise, speed=FAILSAFE_DESCENT))  # climb clear first
+    route += [
+        Waypoint(x=site.x, y=site.y, z=cruise, speed=FAILSAFE_TRANSIT),
+        Waypoint(x=site.x, y=site.y, z=site.elevation, speed=FAILSAFE_DESCENT, action=Action.LAND),
+    ]
+    return route, f"landing on clear ground {site.moved:.0f} m away at ({site.x:.0f}, {site.y:.0f})"
+
+
+def _highest_between(world: World | None, a, b, obstacles: list[Obstacle], every: float = 4.0) -> float:
+    """The highest roof, ground or obstacle top along the straight line a-b."""
+    steps = max(1, int(math.dist(a, b) / every))
+    points = [(a[0] + (b[0] - a[0]) * i / steps, a[1] + (b[1] - a[1]) * i / steps) for i in range(steps + 1)]
+    highest = max(world.surface_at(px, py) for px, py in points) if world else 0.0
+    for obstacle in obstacles:
+        near = min(math.dist((obstacle.x, obstacle.y), p) for p in points) <= obstacle.radius + every
+        if near and obstacle.height is not None:
+            highest = max(highest, obstacle.height)
+    return highest
 
 
 def _landing_of(plan: Plan, pad: UAVState) -> tuple[float, float, float]:

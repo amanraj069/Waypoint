@@ -14,7 +14,7 @@ produces them:
 | `perception`        | the perception source reported an obstacle not known before: `type`, `position`, `severity`, `description`, `obstacle` |
 | `replan_triggered`  | the feedback monitor stopped the flight: `trigger` (what), `reason`, `t`, `position` |
 | `execution_resumed` | a new verified plan takes over mid-flight |
-| `failsafe`          | no safe plan could be found in the air, so it lands where it is |
+| `failsafe`          | no safe plan could be found in the air, so it comes down: here if the ground is clear, else on the nearest clear ground (`landing` says which) |
 | `mission_finished`  | last: the outcome, and the numbers to compare runs by |
 
 Every entry has `seq` (its position), `kind`, and `wall` (wall-clock time);

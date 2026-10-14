@@ -46,7 +46,7 @@ def test_health_says_whether_a_mission_can_be_planned_at_all(client):
 
 def test_a_mission_in_english_is_refused_without_a_key(client, monkeypatch):
     """Better a clear 503 than a 500 from the planner four seconds later."""
-    monkeypatch.setattr("waypoint.api.main.get_api_key", lambda: None)
+    monkeypatch.setattr("waypoint.api.main.get_providers", lambda: ())
 
     response = client.post("/api/missions", json={"mission": "survey the north lawn"})
 
