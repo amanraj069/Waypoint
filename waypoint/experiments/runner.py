@@ -134,13 +134,20 @@ def run_batch(
             "planner": describe_providers(),
             "model_ladder": {"openai": list(get_openai_model_ladder()), "gemini": list(get_model_ladder())},
             "git_commit": _git_commit(),
+            # True when the code that flew is not exactly that commit.
+            "git_dirty": _git_dirty(),
             **config.extra,
         },
         "flights": [],
     }
     _write(out, manifest)
+    if manifest["config"]["git_dirty"]:
+        progress(
+            f"note: the checkout has uncommitted changes, so commit {manifest['config']['git_commit']} "
+            "is not exactly the code that flies (recorded as git_dirty)"
+        )
 
-    total = len(config.conditions) * len(missions) * config.repeats
+    total =len(config.conditions) * len(missions) * config.repeats
     done = 0
     for options in config.conditions:
         planner, replanner = planners(options)
@@ -213,23 +220,26 @@ def _fly(
     backend = make_backend(config.backend, world=scenario.world, wind=scenario.wind)
     started = time.perf_counter()
     spent_before = usage_snapshot()
-    log = run_mission(
-        scenario.spec.mission,
-        scenario.constraints,
-        scenario.faults,
-        backend,
-        world=scenario.world,
-        home=scenario.home,
-        landing=scenario.landing,
-        planner=planner,
-        replanner=replanner,
-        verifier=verifier,
-        adapt=adapt,
-        max_replan_attempts=config.max_replan_attempts,
-        max_total_replans=config.max_total_replans,
-        verbose=False,
-        runs_dir=runs_dir,
-    )
+    try:
+        log = run_mission(
+            scenario.spec.mission,
+            scenario.constraints,
+            scenario.faults,
+            backend,
+            world=scenario.world,
+            home=scenario.home,
+            landing=scenario.landing,
+            planner=planner,
+            replanner=replanner,
+            verifier=verifier,
+            adapt=adapt,
+            max_replan_attempts=config.max_replan_attempts,
+            max_total_replans=config.max_total_replans,
+            verbose=False,
+            runs_dir=runs_dir,
+        )
+    finally:
+        backend.close()
     # Relative to the result directory, so the directory can be moved or shared.
     return {
         "outcome": log.outcome,
@@ -269,3 +279,16 @@ def _git_commit() -> str | None:
     except (OSError, subprocess.SubprocessError):
         return None
     return result.stdout.strip() or None
+
+
+def _git_dirty() -> bool | None:
+    """Whether the checkout has uncommitted changes, untracked files included (None outside git)."""
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=ROOT, capture_output=True, text=True, timeout=5
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return bool(result.stdout.strip())

@@ -52,7 +52,7 @@ python -m waypoint.experiments report experiments/runs/<a> experiments/runs/<b> 
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--missions` | `experiments/missions.json` | the batch file |
-| `--backend` | `custom` | which `ExecutorBackend` flies it; `px4` is accepted once it exists |
+| `--backend` | `custom` | which `ExecutorBackend` flies it: `custom`, or `px4` for PX4 SITL in Gazebo (one flight at a time, about 20 s to start each; `WAYPOINT_PX4_SPEED=4` runs it faster than real time; see the main README) |
 | `--flat` | off | ablation: one flat route instead of named subtasks |
 | `--no-violation-feedback` | off | ablation: the replan prompt says a plan was rejected, not why |
 | `--all-conditions` | off | all four combinations of the two ablations |
@@ -136,7 +136,7 @@ For each condition, mission and repeat, two flights:
 
 ```
 experiments/runs/<stamp>/
-├── manifest.json            config (missions file hash, seed, planner providers and ladders, git commit) and one entry per flight pair
+├── manifest.json            config (missions file hash, seed, planner providers and ladders, git commit, and `git_dirty` if the checkout had uncommitted changes) and one entry per flight pair
 ├── per_mission.csv          one row per flight pair
 ├── replans.csv              one row per in-flight replan trigger
 ├── summary.json             the aggregates, per condition
@@ -168,6 +168,14 @@ entry in the verified run's log. Reported beside it: the share with any
 finding at all, warnings included; which violation types were caught; and how
 often a caught plan was corrected into one that passed, within
 `--max-attempts`.
+
+The violation-feedback ablation only changes what the planner is told after a
+rejection; the first plan is asked for with the same prompt either way. So a
+catch-rate gap between `+feedback` and `+no-feedback` is sampling noise, not an
+effect. Each condition's rate carries a 95% Wilson interval, and the report
+also pools it over the conditions that share a first-plan prompt
+(`first_plan.pooled_catch_rate` in `summary.json`): compare hierarchical with
+flat on the pooled number.
 
 **Replan success.** One row per `replan_triggered` entry in a verified run's
 log. Its attempts are the `verification` entries between the trigger and the

@@ -25,6 +25,9 @@ api = [
 experiments = [
     "matplotlib>=3.8",      # the batch harness's plots; CSVs and summaries work without it
 ]
+px4 = [
+    "pymavlink>=2.4.40",    # --backend px4: MAVLink to PX4 SITL (PX4 and Gazebo installed separately)
+]
 
 [project.scripts]
 waypoint = "waypoint.orchestrator.run_full:main"

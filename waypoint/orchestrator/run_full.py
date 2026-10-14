@@ -10,8 +10,8 @@ runs/: the run file Gazebo replays, and the mission log as JSON Lines.
 `--gazebo` opens the finished flight in Gazebo: the replacement route appears
 at the moment it took over, and the trail shows the aircraft follow it.
 
-`--backend custom` (the default) is the built-in simulator; `px4` is reserved
-for PX4 SITL with Gazebo as its physics.
+`--backend custom` (the default) is the built-in simulator; `px4` flies the
+mission live on PX4 SITL in Gazebo (`WAYPOINT_PX4_GUI=1` to watch it there).
 """
 
 from __future__ import annotations
@@ -87,19 +87,25 @@ def main(argv: list[str] | None = None) -> int:
         print(f"backend: {exc}", file=sys.stderr)
         return 2
 
-    mission_log = run_mission(
-        args.mission,
-        constraints,
-        faults,
-        backend,
-        world=world,
-        planner=planner,
-        max_replan_attempts=args.max_attempts,
-        max_total_replans=args.max_replans,
-        check_every=args.check_every,
-        verbose=not args.quiet,
-        **({"runs_dir": args.runs_dir} if args.runs_dir else {}),
-    )
+    try:
+        mission_log = run_mission(
+            args.mission,
+            constraints,
+            faults,
+            backend,
+            world=world,
+            planner=planner,
+            max_replan_attempts=args.max_attempts,
+            max_total_replans=args.max_replans,
+            check_every=args.check_every,
+            verbose=not args.quiet,
+            **({"runs_dir": args.runs_dir} if args.runs_dir else {}),
+        )
+    except BackendError as exc:  # PX4 would not start, or stopped answering
+        print(f"backend: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        backend.close()
     report = mission_log.report
 
     if args.plot and report is not None and report.run_file:

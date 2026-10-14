@@ -26,7 +26,8 @@ from waypoint.experiments import (
     write_report,
 )
 from waypoint.experiments.cli import DEFAULT_MISSIONS, main
-from waypoint.experiments.metrics import NO_FAULT, attribute
+from waypoint.experiments.metrics import NO_FAULT, MissionRow, attribute
+from waypoint.experiments.report import format_summary
 from waypoint.experiments.spec import mission_seed
 from waypoint.planner import DEFAULT_CONSTRAINTS, Plan, PlannerOptions, plan, replan
 from waypoint.planner.models import Action, SubTask, Waypoint
@@ -256,6 +257,30 @@ def test_the_metrics_count_what_happened(flown):
     assert high.baseline_unsafe_plans == 1 and high.distance_overhead_pct is not None
 
 
+def test_the_catch_rate_is_pooled_over_conditions_that_share_a_first_prompt():
+    def row(condition, caught):
+        return MissionRow(condition=condition, mission_id="m", repeat=0, world="open", faults_spec="none",
+                          fault_types="", planned=True, initial_caught=caught)
+
+    hier_fb, flat_fb, hier_nofb = CONDITIONS[0].label, CONDITIONS[1].label, CONDITIONS[2].label
+    rows = [row(hier_fb, True), row(hier_fb, False), row(hier_nofb, True), row(hier_nofb, True), row(flat_fb, False)]
+    summary = aggregate(rows, [])
+    pooled = summary[hier_fb]["first_plan"]
+    assert pooled == summary[hier_nofb]["first_plan"]
+    assert (pooled["caught"], pooled["planned"], pooled["prompt"]) == (3, 4, "hierarchical")
+    assert summary[flat_fb]["first_plan"]["planned"] == 1  # flat asks differently: not pooled in
+    low, high = summary[hier_fb]["catch_rate_ci95"]
+    assert 0.0 <= low < 0.5 < high <= 1.0
+    text = format_summary(summary)
+    assert "pooled, same first prompt" in text and "sampling noise" in text
+
+
+def test_the_manifest_says_whether_the_checkout_was_dirty(flown):
+    _, out = flown
+    config = json.loads((out / "manifest.json").read_text())["config"]
+    assert "git_dirty" in config and config["git_dirty"] in (True, False, None)
+
+
 def test_the_report_writes_csvs_a_summary_and_plots(flown, tmp_path):
     pytest.importorskip("matplotlib")
     _, out = flown
@@ -362,9 +387,10 @@ def test_run_needs_a_planner_key(monkeypatch, capsys):
     assert "OPENAI_API_KEY" in err and "GEMINI_API_KEY" in err
 
 
-def test_an_unbuilt_backend_fails_before_anything_flies(capsys):
+def test_an_uninstalled_backend_fails_before_anything_flies(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("WAYPOINT_PX4_DIR", str(tmp_path / "no-px4-here"))
     assert main(["run", "--backend", "px4"]) == 2
-    assert "reserved" in capsys.readouterr().err
+    assert "make px4_sitl" in capsys.readouterr().err
 
 
 def test_contradictory_ablation_flags_are_refused(capsys):

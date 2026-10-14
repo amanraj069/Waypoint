@@ -106,6 +106,16 @@ def _share(stats: dict) -> str:
     return f"{cost['tokens_cached'] / cost['tokens_in']:.0%}" if cost.get("tokens_in") else "-"
 
 
+def _interval(bounds) -> str:
+    return "-" if not bounds else f"{bounds[0] * 100:.0f} to {bounds[1] * 100:.0f}%"
+
+
+def _pooled(first_plan: dict | None) -> str:
+    if not first_plan or first_plan["pooled_catch_rate"] is None:
+        return "-"
+    return f"{first_plan['pooled_catch_rate'] * 100:.0f}% ({first_plan['caught']}/{first_plan['planned']})"
+
+
 def format_summary(summary: dict) -> str:
     conditions = list(summary)
     if not conditions:
@@ -125,6 +135,8 @@ def format_summary(summary: dict) -> str:
     lines = [
         ("flights (errors, planning failed)", lambda s: f"{s['flights']} ({s['errors']}, {s['planning_failed']})"),
         ("verifier catch rate", lambda s: f"{pct(s['catch_rate'])} ({s['caught']}/{s['planned']})"),
+        ("  95% interval", lambda s: _interval(s.get("catch_rate_ci95"))),
+        ("  pooled, same first prompt", lambda s: _pooled(s.get("first_plan"))),
         ("  any finding, warnings too", lambda s: pct(s["any_violation_rate"])),
         ("  caught, then corrected", lambda s: pct(s["ground_correction_rate"])),
         ("completed", lambda s: f"{pct(s['completion_rate'])} ({s['completed']}/{s['planned']})"),
@@ -151,6 +163,13 @@ def format_summary(summary: dict) -> str:
     for name, render in lines:
         cells = [render(summary[c]).rjust(w) for c, w in zip(conditions, columns)]
         body.append(name.ljust(width) + "  ".join(cells))
+    if any(len(summary[c].get("first_plan", {}).get("conditions", ())) > 1 for c in conditions):
+        body += [
+            "",
+            "note: violation feedback only changes replans, so feedback on and off share a",
+            "first-plan prompt; a catch-rate gap between them is sampling noise. Compare the",
+            "pooled rate across hierarchical and flat instead.",
+        ]
 
     faults = sorted({f for c in conditions for f in summary[c]["latency_s"]["by_fault"]})
     if faults:
@@ -240,11 +259,18 @@ def _plot_catch_rate(plt, conditions, rows, replans, summary):
     fig, ax = plt.subplots(figsize=(max(4.5, 1.6 * len(conditions) + 1.5), 3.8))
     rates = [(summary[c]["catch_rate"] or 0.0) * 100 for c in conditions]
     bars = ax.bar(range(len(conditions)), rates, width=0.6, color=SLOTS[0], edgecolor=SURFACE, linewidth=2)
-    for bar, c in zip(bars, conditions):
+    for i, (bar, c) in enumerate(zip(bars, conditions)):
         s = summary[c]
+        top = bar.get_height()
+        bounds = s.get("catch_rate_ci95")
+        if bounds:
+            low, high = bounds[0] * 100, bounds[1] * 100
+            ax.plot([i, i], [low, high], color=INK_2, linewidth=1.5, zorder=3,
+                    label="95% interval")
+            top = high
         ax.annotate(
             f"{(s['catch_rate'] or 0) * 100:.0f}%  ({s['caught']}/{s['planned']})",
-            (bar.get_x() + bar.get_width() / 2, bar.get_height()),
+            (bar.get_x() + bar.get_width() / 2, top),
             xytext=(0, 4), textcoords="offset points", ha="center", va="bottom", color=INK, fontsize=9,
         )
     ax.set_xticks(range(len(conditions)), conditions)
@@ -252,6 +278,14 @@ def _plot_catch_rate(plt, conditions, rows, replans, summary):
     ax.set_ylabel("first plans rejected (%)")
     ax.grid(axis="x", visible=False)
     ax.set_title("Verifier catch rate by condition")
+    if any(len(summary[c].get("first_plan", {}).get("conditions", ())) > 1 for c in conditions):
+        fig.text(
+            0.01, -0.02,
+            "Feedback on/off share a first-plan prompt: gaps between them are sampling noise.",
+            color=INK_2, fontsize=8.5, ha="left", va="top",
+        )
+    if any(summary[c].get("catch_rate_ci95") for c in conditions):
+        _dedupe_legend(ax, loc="upper right")
     return fig
 
 

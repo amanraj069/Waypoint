@@ -108,7 +108,7 @@ def isolated_planner_env(monkeypatch):
     is Gemini unless a test opts in), and no model overrides on either ladder."""
     for name in (
         "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_MODELS", "GEMINI_MODEL", "GEMINI_MODELS",
-        "COST", "OPENAI_REASONING_EFFORT",
+        "COST", "OPENAI_REASONING_EFFORT", "WAYPOINT_PX4_GUI", "WAYPOINT_PX4_SPEED", "WAYPOINT_PX4_HOLD",
     ):
         monkeypatch.delenv(name, raising=False)
 

@@ -7,7 +7,9 @@ README defines, per condition:
 
 * **catch rate**: of the missions that got a first plan, the share whose first
   plan the verifier rejected (at least one blocking violation). The share with
-  any finding at all, warnings included, is reported beside it.
+  any finding at all, warnings included, is reported beside it, with a 95%
+  Wilson interval, and pooled over the conditions that share a first-plan
+  prompt (violation feedback does not change the first plan, only replans).
 * **replan success**: of the in-flight replan triggers, the share whose new
   plan passed verification on the first attempt, on the second, later, or
   never (abandoned: the planner failed, every correction was rejected, or the
@@ -309,13 +311,42 @@ def ordered_conditions(labels) -> list[str]:
     return known + sorted(labels - set(known))
 
 
+def first_prompt(condition: str) -> str:
+    """The part of a condition that shapes its first plan.
+
+    Violation feedback only changes what the planner hears after a rejection,
+    so hierarchical+feedback and hierarchical+no-feedback ask for their first
+    plan with the same prompt, and any gap in their catch rates is sampling.
+    """
+    return condition.split("+", 1)[0]
+
+
 def aggregate(rows: list[MissionRow], replans: list[ReplanRow]) -> dict:
     by_condition: dict[str, dict] = {}
     for condition in ordered_conditions({r.condition for r in rows}):
         mine = [r for r in rows if r.condition == condition]
         triggers = [t for t in replans if t.condition == condition]
         by_condition[condition] = _summarise(mine, triggers)
+        same_prompt = [r for r in rows if r.planned and first_prompt(r.condition) == first_prompt(condition)]
+        caught = sum(r.initial_caught for r in same_prompt)
+        by_condition[condition]["first_plan"] = {
+            "prompt": first_prompt(condition),
+            "conditions": sorted({r.condition for r in same_prompt}),
+            "pooled_catch_rate": _rate(caught, len(same_prompt)),
+            "caught": caught,
+            "planned": len(same_prompt),
+        }
     return by_condition
+
+
+def wilson(part: int, whole: int, z: float = 1.96) -> tuple[float, float] | None:
+    """The 95% Wilson interval for a rate, which stays inside 0..1 at small counts."""
+    if not whole:
+        return None
+    p = part / whole
+    centre = (p + z * z / (2 * whole)) / (1 + z * z / whole)
+    half = z * (p * (1 - p) / whole + z * z / (4 * whole * whole)) ** 0.5 / (1 + z * z / whole)
+    return round(max(0.0, centre - half), 4), round(min(1.0, centre + half), 4)
 
 
 def _summarise(rows: list[MissionRow], triggers: list[ReplanRow]) -> dict:
@@ -336,6 +367,7 @@ def _summarise(rows: list[MissionRow], triggers: list[ReplanRow]) -> dict:
         "planning_failed": sum(r.outcome == "planning_failed" for r in rows),
         "planned": len(planned),
         "catch_rate": _rate(len(caught), len(planned)),
+        "catch_rate_ci95": wilson(len(caught), len(planned)),
         "caught": len(caught),
         "any_violation_rate": _rate(sum(r.initial_blocking + r.initial_warnings > 0 for r in planned), len(planned)),
         "violation_types": dict(Counter(
