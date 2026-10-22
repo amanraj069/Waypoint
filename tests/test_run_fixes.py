@@ -185,3 +185,38 @@ def test_a_plan_with_only_empty_phases_still_fails():
     payload = {"subtasks": [{"name": "land", "waypoints": []}]}
     with pytest.raises(PlanValidationError):
         plan("survey", DEFAULT_CONSTRAINTS, client=SequenceClient(json_response(payload)))
+
+
+# ---------------------------------------------------------------------------
+# An obstacle that appears ahead never appears on top of the aircraft
+# ---------------------------------------------------------------------------
+
+
+def test_an_obstacle_ahead_on_a_doubling_back_route_appears_clear_of_the_aircraft():
+    """The demo's north-field survey: up one line, back down a parallel one 5 m over.
+
+    Measured along the route, 35 m ahead put the crane 5 m from the aircraft,
+    inside its keep-out, where no replan can start. It now moves on along the
+    route until it is clear.
+    """
+    from waypoint.sim import FaultEvent, FaultType, Trigger
+    from waypoint.sim.executor import SEEN_MARGIN, place
+
+    crane = Obstacle(x=0.0, y=0.0, radius=8.0, height=60.0, name="mobile crane")
+    event = FaultEvent(type=FaultType.OBSTACLE_APPEARS, trigger=Trigger(at_waypoint=2), ahead=35.0, obstacle=crane)
+    here = (0.0, 49.3)
+    route = [(0.0, 64.3), (-5.0, 64.3), (-5.0, 0.0)]  # 15 up, 5 across, then back down past the aircraft
+    placed = place(event, here, route, separation=5.0)
+    assert math.dist((placed.x, placed.y), here) >= 8.0 + 5.0 + SEEN_MARGIN
+    assert placed.x == pytest.approx(-5.0)  # still on the route
+    assert placed.y < here[1]  # further along it, not back up it
+
+
+def test_an_obstacle_ahead_on_a_straight_route_is_where_it_always_was():
+    from waypoint.sim import FaultEvent, FaultType, Trigger
+    from waypoint.sim.executor import place
+
+    crane = Obstacle(x=0.0, y=0.0, radius=8.0, height=60.0, name="crane")
+    event = FaultEvent(type=FaultType.OBSTACLE_APPEARS, trigger=Trigger(at_waypoint=1), ahead=40.0, obstacle=crane)
+    placed = place(event, (0.0, 0.0), [(0.0, 100.0)], separation=5.0)
+    assert (placed.x, placed.y) == (0.0, 40.0)
