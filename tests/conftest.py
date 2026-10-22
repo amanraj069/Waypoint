@@ -109,6 +109,7 @@ def isolated_planner_env(monkeypatch):
     for name in (
         "OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_MODELS", "GEMINI_MODEL", "GEMINI_MODELS",
         "COST", "OPENAI_REASONING_EFFORT", "WAYPOINT_PX4_GUI", "WAYPOINT_PX4_SPEED", "WAYPOINT_PX4_HOLD",
+        "WAYPOINT_PX4_FAULTS", "WAYPOINT_PX4_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
 

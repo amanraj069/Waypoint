@@ -30,14 +30,21 @@ from pathlib import Path
 
 from waypoint.backends import BackendError
 from waypoint.gazebo.scene import WORLD_NAME, write_scene
+from waypoint.planner.models import MissionConstraints
 from waypoint.world.models import World
 
 #: Where PX4 is looked for when $WAYPOINT_PX4_DIR is not set.
 DEFAULT_PX4_DIR = Path.home() / "PX4-Autopilot"
 PX4_DIR_VAR = "WAYPOINT_PX4_DIR"
-#: PX4 names the first spawned airframe after the model and its instance.
+#: The airframes this backend flies: PX4's x500, bare or carrying a camera.
+#: `x500_depth` has an OAK-D Lite (RGB and depth), `x500_mono_cam` one camera.
+MODELS = ("x500", "x500_depth", "x500_mono_cam")
 MODEL = "x500"
-MODEL_NAME = f"{MODEL}_0"
+
+
+def model_name(model: str) -> str:
+    """PX4 names the first spawned airframe after its model and its instance."""
+    return f"{model}_0"
 CACHE = Path.home() / ".cache" / "waypoint" / "px4"
 
 
@@ -72,8 +79,9 @@ class Px4Install:
                 f"no PX4 SITL build at {install.build}. Clone PX4-Autopilot and run "
                 f"`make px4_sitl` in it, or point ${PX4_DIR_VAR} at your checkout."
             )
-        if not (install.models / MODEL / "model.sdf").exists():
-            raise BackendError(f"PX4's {MODEL} model is missing from {install.models}")
+        for model in MODELS:
+            if not (install.models / model / "model.sdf").exists():
+                raise BackendError(f"PX4's {model} model is missing from {install.models}")
         if shutil.which("gz") is None:
             raise BackendError("`gz` is not on PATH; install Gazebo (brew install gz-jetty).")
         return install
@@ -97,23 +105,34 @@ class Sitl:
         world: World | None,
         pad: tuple[float, float, float],
         *,
+        constraints: MissionConstraints | None = None,
+        model: str = MODEL,
         gui: bool = False,
         speed: float = 1.0,
         install: Px4Install | None = None,
         keep: bool = False,
+        progress=None,
     ):
         self.world = world or World()
         self.pad = pad
+        self.constraints = constraints
+        if model not in MODELS:
+            raise BackendError(f"the airframe must be one of {', '.join(MODELS)}, not {model!r}")
+        self.model = model
+        self.name = model_name(model)
         self.gui = gui
         self.speed = speed
         self.install = install or Px4Install.find()
         self.keep = keep
+        #: Called with a short line at each startup stage; startup takes 20 to 30 s.
+        self.progress = progress or (lambda line: None)
         self.dir: Path | None = None
         self._processes: list[subprocess.Popen] = []
         self._logs: list = []
         self._jobs: queue.Queue = queue.Queue()
         self._worker: threading.Thread | None = None
         self._spawned = 0
+        self._window: subprocess.Popen | None = None
 
     # -- life cycle -------------------------------------------------------------
 
@@ -125,20 +144,28 @@ class Sitl:
         still running), so a start that has not finished in `timeout` is torn
         down and tried again, up to `attempts` times.
         """
+        started = time.monotonic()
         for attempt in range(1, attempts + 1):
             try:
                 self._start(timeout)
+                self.progress(f"PX4 and Gazebo ready in {time.monotonic() - started:.0f} s")
                 return
             except _Stalled as exc:
                 if attempt == attempts:
                     raise BackendError(f"{exc} (gave up after {attempts} attempts)") from None
+                self.progress(f"PX4's startup stalled; starting again (attempt {attempt + 1} of {attempts})")
+            except BaseException:
+                # Ctrl-C, or anything else: never leave Gazebo or PX4 running behind us.
+                self.stop()
+                raise
 
     def _start(self, timeout: float) -> None:
         CACHE.mkdir(parents=True, exist_ok=True)
         self.dir = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%dT%H%M%S-"), dir=CACHE))
         scene_dir, work = self.dir / "scene", self.dir / "px4"
         work.mkdir(parents=True)
-        write_scene({"world": self.world.model_dump(mode="json")}, scene_dir, px4=True)
+        write_scene(self.scene(), scene_dir, px4=True)
+        self.progress("starting Gazebo")
         if self._service_up(f"/world/{WORLD_NAME}/scene/info"):
             # PX4 would attach to whichever answers first, and fly in the wrong world.
             self.stop()
@@ -154,12 +181,14 @@ class Sitl:
         self._await(lambda: self._service_up(f"/world/{WORLD_NAME}/scene/info"), timeout, "Gazebo's world")
         if self.gui:
             self._spawn(["gz", "sim", "-g"], cwd=scene_dir, log="gz-gui.log")
+            self._window = self._processes[-1]
 
         x, y, z = self.pad
+        self.progress(f"starting PX4 ({self.model}) on the launch pad")
         env = {
             "PX4_GZ_STANDALONE": "1",
             "PX4_GZ_WORLD": WORLD_NAME,
-            "PX4_SIM_MODEL": f"gz_{MODEL}",
+            "PX4_SIM_MODEL": f"gz_{self.model}",
             "PX4_GZ_MODELS": str(self.install.models),
             # A few centimetres up, so the airframe settles onto the pad rather than into it.
             "PX4_GZ_MODEL_POSE": f"{x:.3f},{y:.3f},{z + 0.05:.3f},0,0,0",
@@ -173,6 +202,22 @@ class Sitl:
         self._await(self._px4_started, timeout, "PX4's startup script", retry=True)
         self._worker = threading.Thread(target=self._work, name="gz-commands", daemon=True)
         self._worker.start()
+        if self.gui:
+            threading.Thread(target=self._follow, name="gz-follow", daemon=True).start()
+
+    def scene(self) -> dict:
+        """What the world shows: the place, plus everything the verifier reasoned about.
+
+        The geofence walls, the no-fly volumes and the planned obstacles are
+        drawn exactly as the replay draws them, and like there they are glass:
+        seen, never collided with. Keeping the aircraft inside them is the
+        verifier's and the monitor's job, not a wall's.
+        """
+        run: dict = {"world": self.world.model_dump(mode="json"), "pads": {"start": list(self.pad)}}
+        if self.constraints is not None:
+            run["constraints"] = self.constraints.model_dump(mode="json")
+            run["obstacles"] = [{**o.model_dump(mode="json"), "appeared_at": 0.0} for o in self.constraints.obstacles]
+        return run
 
     def stop(self) -> None:
         """Stop PX4 and Gazebo, newest first, and tidy up unless asked to keep the files."""
@@ -194,6 +239,18 @@ class Sitl:
     def running(self) -> bool:
         return bool(self._processes) and all(p.poll() is None for p in self._processes)
 
+    def camera_topics(self) -> list[str]:
+        """The image topics Gazebo is publishing for the aircraft's camera, if it has one."""
+        listed = self._run(["gz", "topic", "-l"], timeout=10)
+        if listed is None:
+            return []
+        return [t for t in listed.stdout.split() if t.endswith("/image") and self.name in t or t == "/depth_camera"]
+
+    def wait_for_window(self) -> None:
+        """Return once the Gazebo window has been closed (at once if there is none)."""
+        if self.gui and self._window is not None:
+            self._window.wait()
+
     def tail(self, name: str = "px4.log", lines: int = 15) -> str:
         """The end of one of the session's logs, for an error message."""
         path = self.dir / name if self.dir else None
@@ -212,7 +269,7 @@ class Sitl:
 
     def push(self, force: tuple[float, float, float]) -> None:
         """Hold a steady force (N, world frame) on the airframe, replacing the last; zero clears it."""
-        entity = f'name: "{MODEL_NAME}", type: MODEL'
+        entity = f'name: "{self.name}", type: MODEL'
         self._later(["gz", "topic", "-t", f"/world/{WORLD_NAME}/wrench/clear", "-m", "gz.msgs.Entity", "-p", entity])
         if any(abs(c) > 1e-3 for c in force):
             fx, fy, fz = force
@@ -295,14 +352,60 @@ class Sitl:
             raise BackendError(f"Gazebo did not accept {name} ({request})")
 
     def _run(self, args: list[str], timeout: float) -> subprocess.CompletedProcess | None:
+        """Run a `gz` command; None if it fails or outlives `timeout`.
+
+        `gz` is a Ruby wrapper that starts the real tool as a child. On a timeout
+        `subprocess.run` kills only the wrapper and then waits for the child to
+        close the output pipe, which it may never do; so the whole process group
+        is killed instead, and this can never hang.
+        """
         try:
-            return subprocess.run(args, env=self._env(), capture_output=True, text=True, timeout=timeout)
-        except (OSError, subprocess.SubprocessError):
+            process = subprocess.Popen(
+                args, env=self._env(), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL, text=True, start_new_session=True,
+            )
+        except OSError:
             return None
+        try:
+            out, err = process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            _kill_group(process)
+            return None
+        except BaseException:
+            _kill_group(process)
+            raise
+        return subprocess.CompletedProcess(args, process.returncode, out, err)
 
     def _later(self, args: list[str]) -> None:
         """Queue a command the flight need not wait for, run in order on the worker."""
         self._jobs.put(args)
+
+    def _follow(self, wait: float = 60.0) -> None:
+        """Point the window's camera at the aircraft and keep it there.
+
+        Jetty's GUI tracks through `/gui/track`; PX4's own PX4_GZ_FOLLOW calls
+        `/gui/follow`, which this Gazebo no longer has. The window comes up well
+        after the server and a new subscriber misses the first few messages, so
+        this waits for the topic and then says it a few times.
+        """
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline and self._processes:
+            listed = self._run(["gz", "topic", "-l"], timeout=5)
+            if listed is not None and "/gui/track" in listed.stdout:
+                break
+            time.sleep(1.0)
+        else:
+            return
+        request = (
+            f'track_mode: FOLLOW_LOOK_AT, follow_target: {{name: "{self.name}"}}, '
+            f'track_target: {{name: "{self.name}"}}, follow_offset: {{x: -8, y: -8, z: 5}}, '
+            "follow_pgain: 0.08, track_pgain: 0.2"
+        )
+        for _ in range(5):
+            if not self._processes:
+                return
+            self._run(["gz", "topic", "-t", "/gui/track", "-m", "gz.msgs.CameraTrack", "-p", request], timeout=5)
+            time.sleep(0.5)
 
     def _work(self) -> None:
         while (args := self._jobs.get()) is not None:
@@ -311,6 +414,17 @@ class Sitl:
 
 class _Stalled(BackendError):
     """PX4's startup ran out of time with every process still alive: worth another try."""
+
+
+def _kill_group(process: subprocess.Popen) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    try:
+        process.communicate(timeout=2)
+    except (subprocess.TimeoutExpired, ValueError, OSError):
+        pass
 
 
 def _stop(process: subprocess.Popen) -> None:

@@ -50,6 +50,7 @@ class FakeLink:
         self.latest: dict = {}
         self.params: dict = {}
         self.killed = False
+        self.commands: list = []
         FakeLink.last = self
         self._publish()
 
@@ -73,6 +74,13 @@ class FakeLink:
         while self.t_ms < after_ms:
             self._step()
         return self.latest["LOCAL_POSITION_NED"]
+
+    def wait_sample(self, due_ms, timeout):
+        before = None
+        while self.t_ms < due_ms:
+            before = self.latest["LOCAL_POSITION_NED"]
+            self._step()
+        return before, self.latest["LOCAL_POSITION_NED"]
 
     @property
     def armed(self):
@@ -103,9 +111,23 @@ class FakeLink:
         self.killed, self.is_armed, self.mode = True, False, "dead"
         return 0
 
+    def command(self, command, *params, timeout=3.0):
+        """Failure injection as PX4 v1.17 with Gazebo answers it: battery yes, GPS silence."""
+        self.commands.append((command, *params))
+        unit, failure_type = int(params[0]), int(params[1])
+        if command == 420 and unit == 100:
+            self.latest["SYS_STATUS"] = SimpleNamespace(battery_remaining=3 if failure_type == 1 else 100)
+            if failure_type == 1:
+                self.failsafe_at = self.t_ms + 2000  # PX4 then lands it by itself
+            return 0
+        return None
+
     def _step(self):
-        dt = STEP_MS / 1000.0
+        dt = (16 if not getattr(self, "_odd", False) else 24) / 1000.0
         n, e, d = self.position
+        if self.mode == "offboard" and self.t_ms >= getattr(self, "failsafe_at", math.inf):
+            self.mode = "land"
+            self.statustext.append("Failsafe activated")
         if self.mode == "offboard" and self.setpoint is not None:
             if self.setpoint.mask == VELOCITY_MASK:
                 self.velocity = list(self.setpoint.velocity)
@@ -123,8 +145,12 @@ class FakeLink:
         self.position = [n + self.velocity[0] * dt, e + self.velocity[1] * dt, min(0.0, d + self.velocity[2] * dt)]
         if self.mode == "land" and self.position[2] >= 0.0:
             self.mode, self.is_armed, self.velocity = "landed", False, [0.0, 0.0, 0.0]
-        self.t_ms += STEP_MS
+        self.t_ms += self._next_gap()
         self._publish()
+
+    def _next_gap(self):
+        self._odd = not getattr(self, "_odd", False)
+        return 16 if self._odd else 24
 
     def _publish(self):
         n, e, d = self.position
@@ -324,6 +350,59 @@ def test_an_obstacle_appears_on_the_route_and_in_gazebo(fake_px4):
     assert any("appeared_" in sdf for sdf in shown)
 
 
+def test_native_faults_inject_the_battery_failure_into_px4(fake_px4):
+    spike = FaultSchedule.of(FaultEvent(
+        type=FaultType.BATTERY_DRAIN_SPIKE, trigger=Trigger(time=4.0), magnitude=0.5, duration=5.0,
+    ))
+    backend = fake_px4(faults="px4")
+    states = fly(backend, square(), faults=spike)
+    assert (420, 100, 1, 0) in FakeLink.last.commands
+    assert FakeLink.last.params["SYS_FAILURE_EN"] == 1
+    fault = next(e for e in backend.event_records() if e["type"] == "FAULT")
+    assert fault["payload"]["delivery"] == "injected into PX4"
+    # PX4's battery hit its emergency level, so the loop's battery is flat too, and it came down.
+    assert backend.battery_depleted and states[-1].battery_pct == 0.0
+    assert backend.event_records()[-1]["type"] == "LANDED" and not backend.crashed
+    assert backend.describe()["fault_delivery"] == "px4"
+
+
+def test_a_px4_failsafe_takes_over_and_lands_without_a_crash(fake_px4):
+    backend = fake_px4()
+    backend.prepare(DEFAULT_CONSTRAINTS, FaultSchedule())
+    FakeLink.last.failsafe_at = FakeLink.last.t_ms + 12000  # PX4 decides to land, mid-plan
+    list(backend.run(square()))
+    kinds = [e["type"] for e in backend.event_records()]
+    assert "PX4_FAILSAFE" in kinds and kinds[-1] == "LANDED"
+    assert not backend.crashed and not FakeLink.last.killed
+
+
+def test_native_faults_imitate_what_px4_will_not_take(fake_px4):
+    drift = FaultSchedule.of(
+        FaultEvent(type=FaultType.GPS_DRIFT, trigger=Trigger(time=3.0), magnitude=1.0, duration=4.0),
+        FaultEvent(type=FaultType.GPS_DRIFT, trigger=Trigger(time=9.0), magnitude=1.0, duration=2.0),
+    )
+    backend = fake_px4(faults="px4")
+    states = fly(backend, square(), faults=drift)
+    faults = [e for e in backend.event_records() if e["type"] == "FAULT"]
+    assert all(f["payload"]["delivery"].startswith("imitated") for f in faults)
+    assert states[-1].gps_offset[0] == pytest.approx(6.0, abs=0.2)  # drifted all the same
+    gps_asks = [c for c in FakeLink.last.commands if c[0] == 420 and c[1] == 7]
+    assert len(gps_asks) == 1  # asked once; after no answer, not again
+
+
+def test_the_airframe_can_carry_a_camera(fake_px4):
+    backend = fake_px4(model="x500_depth")
+    backend.prepare(DEFAULT_CONSTRAINTS, FaultSchedule())
+    assert backend.describe()["airframe"] == "gz_x500_depth"
+    with pytest.raises(BackendError, match="airframe"):
+        fake_px4(model="x500_banana")
+
+
+def test_an_unknown_fault_delivery_is_refused():
+    with pytest.raises(BackendError, match="faults"):
+        Px4Backend(install=FakeInstall(), faults="chaos")
+
+
 def test_flying_into_a_building_cuts_the_motors(fake_px4):
     block = Building(footprint=[GeoPoint(x=15, y=-10), GeoPoint(x=25, y=-10), GeoPoint(x=25, y=10), GeoPoint(x=15, y=10)],
                      height=30, name="the block")
@@ -378,6 +457,36 @@ def test_close_stops_the_simulation(fake_px4):
 # ---------------------------------------------------------------------------
 
 
+def test_the_px4_world_shows_what_the_verifier_reasoned_about(tmp_path):
+    import re
+
+    from waypoint.px4.sitl import Sitl
+
+    constraints = DEFAULT_CONSTRAINTS.model_copy(update={
+        "geofence": [GeoPoint(x=-150, y=-150), GeoPoint(x=150, y=-150), GeoPoint(x=150, y=150), GeoPoint(x=-150, y=150)],
+        "no_fly_zones": [[GeoPoint(x=60, y=60), GeoPoint(x=90, y=60), GeoPoint(x=90, y=90), GeoPoint(x=60, y=90)]],
+        "obstacles": [Obstacle(x=-40.0, y=25.0, radius=7.0, height=45.0, name="water tower")],
+    })
+    session = Sitl(None, (10.0, 20.0, 0.0), constraints=constraints, install=FakeInstall())
+    sdf = write_scene(session.scene(), tmp_path, px4=True).sdf.read_text()
+
+    assert sdf.count('<visual name="fence_') == 4  # one glass wall per side
+    assert '<visual name="nofly_0">' in sdf and "<point>60.00 60.00</point>" in sdf
+    assert "<pose>-40.00 25.00 22.50 0 0 0</pose>" in sdf and "<radius>7.00</radius>" in sdf
+    assert '<model name="launch_pad">' in sdf and "<pose>10.00 20.00" in sdf
+    # Seen, never hit: the only thing in the world with a collision is the ground.
+    assert re.findall(r'<collision name="([^"]+)"', sdf) == ["ground"]
+
+
+def test_a_landing_pad_elsewhere_is_drawn_when_the_plan_arrives(fake_px4):
+    backend = fake_px4()
+    plan = Plan(mission_text="m", subtasks=[SubTask(name="r", waypoints=[
+        wp(0, 0, 20), wp(60, 0, 20), wp(60, 0, 0, 1.5, Action.LAND)])])
+    fly(backend, plan)
+    shown = [call[1] for call in FakeSitl.last.calls if isinstance(call, tuple) and call[0] == "show"]
+    assert any('model name="landing_pad"' in sdf and "<pose>60.00 0.00" in sdf for sdf in shown)
+
+
 def test_a_stalled_px4_start_is_tried_again(monkeypatch):
     from waypoint.px4 import sitl
 
@@ -397,6 +506,31 @@ def test_a_stalled_px4_start_is_tried_again(monkeypatch):
     monkeypatch.setattr(sitl.Sitl, "_start", lambda self, timeout: (_ for _ in ()).throw(sitl._Stalled("stuck")))
     with pytest.raises(BackendError, match="gave up after 3 attempts"):
         session.start()
+
+
+def test_the_spec_name_is_the_same_backend():
+    from waypoint.sim.gazebo_backend import Px4GazeboBackend
+
+    assert Px4GazeboBackend is Px4Backend
+
+
+def test_the_custom_simulator_never_loads_px4():
+    import subprocess
+
+    code = "import sys, waypoint.sim, waypoint.orchestrator; print('waypoint.px4.link' in sys.modules)"
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True).stdout
+    assert out.strip() == "False"
+
+
+def test_camera_perception_is_a_stub_for_now():
+    from waypoint.feedback import GazeboCameraPerceptionSource, PerceptionSource
+    from waypoint.sim.state import UAVState
+
+    source = GazeboCameraPerceptionSource()
+    assert isinstance(source, PerceptionSource) and source.name == "gazebo_camera"
+    assert source.depth_topic == "/depth_camera" and source.rgb_topic.endswith("/IMX214/image")
+    with pytest.raises(NotImplementedError, match="SymbolicPerceptionSource"):
+        source.get_events(UAVState(x=0.0, y=0.0, z=10.0))
 
 
 def test_integer_parameters_travel_as_their_own_bytes():
@@ -439,3 +573,21 @@ def test_a_real_px4_flight(tmp_path):
     assert log.outcome == "completed"
     last = log.report.states[-1]
     assert math.hypot(last.x, last.y) < 3.0
+
+
+@pytest.mark.skipif(os.environ.get("WAYPOINT_PX4_TESTS") != "1", reason="flies PX4 SITL; set WAYPOINT_PX4_TESTS=1")
+def test_a_real_px4_replan_around_the_crane(tmp_path):
+    from waypoint.backends import make_backend
+
+    script = Script()
+    backend = make_backend("px4")
+    try:
+        log = run_mission("survey the north field", DEFAULT_CONSTRAINTS, crane_ahead(), backend,
+                          planner=script.planner, replanner=script.replanner, verbose=False, runs_dir=tmp_path)
+    finally:
+        backend.close()
+    assert log.outcome == "completed" and len(log.of("replan_triggered")) == 1
+    report = log.report
+    crane = next(o for o in report.obstacles if o["name"] == CRANE.name)
+    after = [s for s in report.states if s.timestamp >= crane["appeared_at"]]
+    assert min(math.hypot(s.x - crane["x"], s.y - crane["y"]) for s in after) > crane["radius"]

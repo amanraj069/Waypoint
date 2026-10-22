@@ -71,6 +71,7 @@ class Link:
             raise BackendError('the px4 backend needs pymavlink: pip install -e ".[px4]"')
         self.conn = mavutil.mavlink_connection(address, source_system=245, source_component=190)
         self.latest: dict[str, object] = {}
+        self._before = None  # the LOCAL_POSITION_NED before the latest one
         self.statustext: list[str] = []
         self._acks: dict[int, object] = {}
         self._params: dict[str, float] = {}
@@ -120,6 +121,8 @@ class Link:
             if kind == "BAD_DATA":
                 continue
             with self._new:
+                if kind == "LOCAL_POSITION_NED":
+                    self._before = self.latest.get(kind)
                 self.latest[kind] = message
                 if kind == "COMMAND_ACK":
                     self._acks[message.command] = message
@@ -138,6 +141,19 @@ class Link:
                 message = self.latest.get("LOCAL_POSITION_NED")
                 if message is not None and message.time_boot_ms >= after_ms:
                     return message
+                left = deadline - time.monotonic()
+                if left <= 0 or self._closed:
+                    return None
+                self._new.wait(left)
+
+    def wait_sample(self, due_ms: int, timeout: float):
+        """The first LOCAL_POSITION_NED at or after `due_ms`, with the one before it: (before, after)."""
+        deadline = time.monotonic() + timeout
+        with self._new:
+            while True:
+                message = self.latest.get("LOCAL_POSITION_NED")
+                if message is not None and message.time_boot_ms >= due_ms:
+                    return self._before, message
                 left = deadline - time.monotonic()
                 if left <= 0 or self._closed:
                     return None

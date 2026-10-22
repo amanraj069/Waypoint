@@ -101,9 +101,14 @@ def main(argv: list[str] | None = None) -> int:
             verbose=not args.quiet,
             **({"runs_dir": args.runs_dir} if args.runs_dir else {}),
         )
+        if not args.quiet:
+            backend.linger()  # a Gazebo window stays up until it is closed
     except BackendError as exc:  # PX4 would not start, or stopped answering
         print(f"backend: {exc}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:  # the backend is closed on the way out, below
+        print("\n  stopped.", file=sys.stderr)
+        return 130
     finally:
         backend.close()
     report = mission_log.report
