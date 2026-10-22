@@ -76,27 +76,57 @@ class _Active:
         return self.expires is None or t < self.expires
 
 
-def place(event: FaultEvent, here: tuple[float, float], route: list[tuple[float, float]]) -> Obstacle:
+#: How much room an appearing obstacle leaves beyond its keep-out, so a sensor
+#: that sees it has room to turn: it never appears with the aircraft inside it.
+SEEN_MARGIN = 5.0
+
+
+def place(
+    event: FaultEvent,
+    here: tuple[float, float],
+    route: list[tuple[float, float]],
+    separation: float = 0.0,
+) -> Obstacle:
     """Where an appearing obstacle goes: its own x/y, or `ahead` metres up the route still to fly.
 
     `route` is the x/y of the waypoints not yet reached, starting with the one
     the aircraft is flying toward. Shared by every backend, so a schedule puts
     its obstacle in the same place whichever one flies it.
+
+    Measured along a route that doubles back (a survey's parallel passes), the
+    point `ahead` metres on can lie right beside the aircraft. A sensor would
+    have seen that obstacle long before it was that close, and no plan could
+    start outside its keep-out, so the obstacle moves further along the route
+    until the aircraft is at least its radius, the `separation` and
+    `SEEN_MARGIN` away from it.
     """
     obstacle = event.obstacle
     if not event.ahead:
         return obstacle
     points = [here, *route]
-    left = event.ahead
-    x, y = points[0]
+    clear = obstacle.radius + separation + SEEN_MARGIN
+    distance = event.ahead
+    x, y = best = _along(points, distance)
+    total = sum(math.dist(a, b) for a, b in zip(points, points[1:]))
+    while math.dist((x, y), here) < clear and distance < total:
+        distance += 1.0
+        x, y = _along(points, distance)
+        if math.dist((x, y), here) > math.dist(best, here):
+            best = (x, y)
+    if math.dist((x, y), here) < clear:
+        x, y = best  # nowhere on the route is clear: the farthest point there is
+    return obstacle.model_copy(update={"x": round(x, 2), "y": round(y, 2)})
+
+
+def _along(points: list[tuple[float, float]], distance: float) -> tuple[float, float]:
+    """The point `distance` metres along a polyline (its end, past the end)."""
+    left = distance
     for (ax, ay), (bx, by) in zip(points, points[1:]):
         length = math.hypot(bx - ax, by - ay)
         if length >= left:
-            x, y = ax + (bx - ax) * left / length, ay + (by - ay) * left / length
-            break
+            return ax + (bx - ax) * left / length, ay + (by - ay) * left / length
         left -= length
-        x, y = bx, by
-    return obstacle.model_copy(update={"x": round(x, 2), "y": round(y, 2)})
+    return points[-1]
 
 
 def initial_state(battery_pct: float = 100.0, config: SimConfig | None = None) -> UAVState:
@@ -405,7 +435,8 @@ class Executor:
     def _place(self, event: FaultEvent) -> Obstacle:
         """Where an appearing obstacle goes: its own x/y, or `ahead` metres up the route."""
         route = [(wp.x, wp.y) for _, wp in self._flat_plan()[self._target_index:]]
-        return place(event, (self.state.x, self.state.y), route)
+        separation = self.constraints.min_separation if self.constraints else 0.0
+        return place(event, (self.state.x, self.state.y), route, separation)
 
     def _gust(self) -> Vector:
         gust = (0.0, 0.0, 0.0)

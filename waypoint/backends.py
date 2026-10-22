@@ -95,6 +95,9 @@ class ExecutorBackend(ABC):
     def close(self) -> None:
         """Stop anything the flight started. Nothing to do for an in-process backend."""
 
+    def linger(self) -> None:
+        """Keep any window the flight opened until the person closes it; nothing to do otherwise."""
+
 
 BACKENDS = ("custom", "px4")
 

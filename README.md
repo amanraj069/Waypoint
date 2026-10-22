@@ -4,14 +4,16 @@
 Adaptation**. Say a mission in plain English, watch a language model decompose
 it, a deterministic verifier check it, and a simulator fly it through a real
 place, replanning in the air when something gets in the way. The planner, the
-verifier, the simulator and the in-flight feedback are all real.
+verifier, the simulator and the in-flight feedback are all real, and the same
+loop can fly the real PX4 autopilot in Gazebo instead of the simulator.
 
 ```
 natural language mission
         -> world      (terrain + buildings)        [REAL: four Indian places, or OpenStreetMap]
         -> planner    (LLM hierarchical planner)   [REAL: OpenAI, then Gemini; strict JSON schema]
         -> verifier   (deterministic safety check) [REAL: shapely geometry, no model in the loop]
-        -> sim        (UAV executor)               [REAL: point-mass physics, wind, faults, collisions]
+        -> sim        (UAV executor)               [REAL: point-mass physics, wind, faults, collisions;
+                                                    or PX4 SITL flying an x500 in Gazebo, --backend px4]
         -> feedback   (perception + monitor)       [REAL: new obstacle on the route, battery short or failing, off route]
         -> replan loop back into planner           [REAL: on the ground after a rejection, in the air from where it is]
 ```
@@ -26,7 +28,8 @@ English, and flies it:
 **The CLI** does each stage on its own, and every stage is also importable.
 Both drive the same pipeline; neither is a wrapper around the other. You watch
 the result in **Gazebo**, which is the only 3D view: every run becomes an SDF
-world and the flight is replayed in it.
+world and the flight is replayed in it. With `--backend px4` the flight is not
+replayed but flown live there, by PX4 (section 5c).
 
 ## Layout
 
@@ -36,7 +39,7 @@ waypoint/                 the repository
 │   ├── world/            where it flies: terrain, buildings, landmarks
 │   ├── planner/          English -> hierarchical Plan, via OpenAI or Gemini
 │   ├── verifier/         deterministic safety check of a Plan
-│   ├── sim/              point-mass physics, wind, fault injection
+│   ├── sim/              point-mass physics, wind, fault injection (gazebo_backend.py: the PX4 backend's spec name)
 │   ├── feedback/         perception sources, and the in-flight monitor: needs_replan(), summarize_for_llm()
 │   ├── orchestrator/     the closed loop, its MissionLog, the CLI, run files
 │   ├── backends.py       ExecutorBackend: all the loop may ask of what flies
@@ -46,7 +49,8 @@ waypoint/                 the repository
 │   ├── experiments/      batch runs, ablations, metrics and plots
 │   ├── scenario.py       short specs ("lodhi", "sample", "4,0,0") -> inputs
 │   └── paths.py          where data, worlds and runs live on disk
-├── scripts/              the commands you run
+├── scripts/              the commands you run; setup_px4.sh and px4_check.py for the PX4 backend
+│   └── px4-patches/      three small build fixes PX4 v1.17 needs against current Homebrew
 ├── data/
 │   ├── worlds/           saved environments, one JSON per place
 │   ├── plans/            verified plans that fly without an API key
@@ -63,8 +67,8 @@ waypoint/                 the repository
 | `waypoint.verifier` | `verify(plan, constraints) -> VerificationResult` (`passed`, `violations`); the checks live in `verifier/checks.py` |
 | `waypoint.sim` | `UAVState`, `Executor`, point-mass `dynamics`, `Wind`, `FaultSchedule`; `execute(plan)` yields a state per 0.1 s tick |
 | `waypoint.backends` | `ExecutorBackend` (`prepare`, `run(plan)`, `close()`, ...) and `make_backend("custom" \| "px4")` |
-| `waypoint.px4` | `Px4Backend`: PX4's x500 flown in offboard mode through Gazebo; `Sitl` starts and stops PX4 and Gazebo |
-| `waypoint.feedback` | `needs_replan(history) -> ReplanTrigger | None`, `summarize_for_llm(snapshot, trigger)`, `path_deviation()`; `PerceptionSource` and `SymbolicPerceptionSource` |
+| `waypoint.px4` | `Px4Backend` (also `waypoint.sim.gazebo_backend.Px4GazeboBackend`): PX4's x500 flown in offboard mode through Gazebo; `Sitl` starts and stops PX4 and Gazebo; `Link` is the MAVLink side |
+| `waypoint.feedback` | `needs_replan(history) -> ReplanTrigger | None`, `summarize_for_llm(snapshot, trigger)`, `path_deviation()`; `PerceptionSource`, `SymbolicPerceptionSource`, and the `GazeboCameraPerceptionSource` stub |
 | `waypoint.orchestrator` | `run_mission(mission, constraints, faults, backend) -> MissionLog` and the `run_full` CLI |
 | `waypoint.gazebo` | `write_scene(run)` and `play(run)`: the 3D view |
 | `waypoint.api` | FastAPI over the pipeline: worlds, missions (streamed as they happen), runs |
@@ -88,6 +92,7 @@ Secrets live in `.env`, which is gitignored. `.env.example` documents the keys:
 | `OPENAI_MODEL` | no | Moves one model to the front of the `COST` tier's ladder |
 | `OPENAI_MODELS` | no | Replaces the OpenAI ladder outright, comma separated (wins over `COST`) |
 | `GEMINI_MODEL` / `GEMINI_MODELS` | no | The same, for the Gemini ladder |
+| `WAYPOINT_PX4_DIR`, `_GUI`, `_SPEED`, `_HOLD`, `_FAULTS`, `_MODEL` | no | Only for `--backend px4`: where PX4 is, whether to open the window, speed factor, what happens while replanning, how faults reach PX4, which airframe. See section 5c |
 
 A real environment variable overrides `.env`, so exported keys and CI secrets
 win. A blank key is treated as unset, so the placeholder in a fresh `.env`
@@ -112,7 +117,9 @@ brew install gz-jetty                   # macOS; any gz-sim >= Harmonic works
 
 Gazebo's Python bindings are built for Homebrew's Python rather than the
 project's, so the one process that talks to Gazebo runs in that small side
-environment; everything else runs in `.venv`. If you only want the CLI,
+environment; everything else runs in `.venv`. To fly missions on the real PX4
+autopilot as well, `scripts/setup_px4.sh` builds PX4 SITL against this Gazebo
+(a large clone and a full build the first time; section 5c). If you only want the CLI,
 `".[dev]"` is enough; `api` is just FastAPI and uvicorn, and nothing outside
 `waypoint/api/` imports them. An LLM key (OpenAI or Gemini) is only
 required to *plan* a new mission; flying and replaying work without one:
@@ -430,74 +437,227 @@ planner (replans in the air still use it). Exits 0 when the mission completes.
 
 `--backend px4` replaces the point-mass simulator with the real autopilot: PX4
 flies its x500 quadrotor through Gazebo's physics, in a Gazebo world written
-from the same `World` the planner and verifier used, and the closed loop
-replans it in the air exactly as before. Everything else (the run file, the
-mission log, the experiment metrics) is unchanged, so the two backends compare
-like for like.
+from the same `World` and `MissionConstraints` the planner and verifier used,
+and the closed loop replans it in the air exactly as before
+(`orchestrator/loop.py` does not know which backend it is driving). The run
+file, the mission log and the experiment metrics are the same, so the two
+backends compare like for like.
 
-One-time setup (macOS on Apple silicon; Linux is the same minus Homebrew):
+#### Setup (macOS on Apple silicon)
+
+Gazebo first, if it is not there: `brew tap osrf/simulation && brew install
+gz-jetty` (or `gz-harmonic`; PX4 v1.17 supports both). Then:
 
 ```bash
-brew install gz-jetty ninja ccache opencv        # Gazebo and PX4's build tools
-git clone --recursive --branch v1.17.0 https://github.com/PX4/PX4-Autopilot.git ~/PX4-Autopilot
-cd ~/PX4-Autopilot && python3 -m venv .venv && .venv/bin/pip install -r Tools/setup/requirements.txt
-PATH="$PWD/.venv/bin:$PATH" make px4_sitl        # see the note below on current Homebrew
-cd - && .venv/bin/pip install -e ".[px4]"         # pymavlink, for this project
+scripts/setup_px4.sh            # clone PX4 v1.17.0, patch, build SITL, install pymavlink here
+scripts/setup_px4.sh --check    # just report what is there and what is missing
+python scripts/px4_check.py     # the end-to-end check below, about 3 minutes
 ```
 
-PX4 v1.17 does not build unmodified against current Homebrew protobuf, abseil
-and OpenCV 5: three CMake files need a `# Local patch` (generated protobuf code
-as C++17 without `-Werror`, gz plugins without `-Werror`, and the optical-flow
-plugin skipped under OpenCV 5). Nothing here uses optical flow or the camera
-plugin.
+The script is safe to run again: every step checks first. It does, in order:
+
+1. Checks that `gz`, `cmake`, `ninja` and `ccache` are installed, and installs
+   the last three with Homebrew if not.
+2. `git clone --recursive --branch v1.17.0
+   https://github.com/PX4/PX4-Autopilot.git ~/PX4-Autopilot`
+   (`WAYPOINT_PX4_DIR` and `PX4_VERSION` change both).
+3. Makes PX4's Python tools in a venv inside the checkout.
+4. Applies `scripts/px4-patches/*.patch`.
+5. Runs `make px4_sitl`.
+6. Runs `pip install -e ".[px4]"` here (pymavlink).
+
+Why not PX4's own `Tools/setup/macos.sh`:
+- it installs the ARM cross-compilers for flight-controller hardware, which
+  SITL does not need;
+- its `pip install --user` fails on Homebrew's Python (PEP 668).
+
+It still works if you prefer it; run the patch and build steps after it.
+
+The three patches exist because PX4 v1.17 does not build unmodified against
+current Homebrew. Each one is a few lines and says why:
+- `01` compiles PX4's generated Gazebo messages as C++17, which protobuf's
+  abseil needs, without `-Werror`.
+- `02` builds the gz bridge without `-Werror`.
+- `03` builds the gz plugins without `-Werror`, and skips the optical-flow
+  plugin unless an OpenCV older than 5 is installed (it uses OpenCV's removed
+  C API).
+
+Nothing here uses optical flow, so OpenCV is not needed at all.
+
+To check PX4 on its own before involving waypoint, its baseline target flies
+the x500 in PX4's default world, with PX4's interactive shell:
+
+```bash
+cd ~/PX4-Autopilot && PATH="$PWD/.venv/bin:$PATH" make px4_sitl gz_x500
+pxh> commander takeoff        # needs NAV_DLL_ACT 0 and COM_RC_IN_MODE 4 without a ground station
+```
+
+#### If the build fails
+
+- **Gazebo version detection.** PX4's Gazebo integration is version-sensitive.
+  If the build stops there, compare the Gazebo versions PX4 knows about with
+  what is installed:
+  - PX4 side: `Tools/simulation/gz/README.md` and the `find_package(gz-...)`
+    lines in `src/modules/simulation/gz_bridge/CMakeLists.txt`;
+  - installed side: `gz sim --versions`.
+
+  PX4 v1.17 accepts Harmonic (gz-sim 8) and newer.
+- **Gazebo itself stops working after a `brew install` or `brew upgrade`**
+  (for example `Library not loaded: libprotobuf.<version>.dylib`). Something
+  upgraded protobuf ahead of the Gazebo bottles. Installing OpenCV does exactly
+  this. Upgrade every Gazebo formula to the bottles rebuilt for the new
+  protobuf:
+
+  ```bash
+  brew upgrade $(brew list --formula | grep -E '^(gz-|sdformat)')
+  ```
+
+  If Homebrew then refuses with "conflicting formulae" for `ogre2.3`, the
+  rebuilt bottles want `ogre2.3-with-freeimage` instead:
+
+  ```bash
+  brew uninstall --ignore-dependencies osrf/simulation/ogre2.3
+  ```
+
+  Then run the upgrade again, and rebuild PX4 with `scripts/setup_px4.sh`.
+
+#### Run it
 
 ```bash
 # the crane scenario on the real autopilot, headless
 python -m waypoint.orchestrator.run_full --backend px4 --faults crane_ahead \
     --mission "survey the north field: photograph the corners of the field 80 m north of base, then come home and land"
 
-# watch it in the Gazebo window, or run a batch faster than real time
+# watch it: the window follows the aircraft, and stays open after landing until you close it
 WAYPOINT_PX4_GUI=1 python -m waypoint.orchestrator.run_full --backend px4 --world lodhi \
     --mission "take a round of the garden, photograph Bara Gumbad, and come home"
+
+# a batch, faster than real time
 WAYPOINT_PX4_SPEED=4 python -m waypoint.experiments run --backend px4 --limit 5
 ```
+
+`from waypoint.sim.gazebo_backend import Px4GazeboBackend` is the same
+backend, by the name the Stage 8 spec gives it; `make_backend("px4")` is the
+usual way in.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `WAYPOINT_PX4_DIR` | `~/PX4-Autopilot` | The checkout with `make px4_sitl` built |
-| `WAYPOINT_PX4_GUI` | off | `1` opens the Gazebo window |
+| `WAYPOINT_PX4_GUI` | off | `1` opens the Gazebo window, following the aircraft |
 | `WAYPOINT_PX4_SPEED` | `1` | Simulation speed factor (PX4 runs in lockstep with Gazebo) |
 | `WAYPOINT_PX4_HOLD` | `freeze` | While the planner thinks: `freeze` pauses Gazebo (and so PX4's clock), `hover` hovers in real time |
+| `WAYPOINT_PX4_FAULTS` | `emulate` | `emulate` imitates every fault, comparably with the custom simulator; `px4` injects into PX4 what PX4 accepts (below) |
+| `WAYPOINT_PX4_MODEL` | `x500` | `x500_depth` carries an OAK-D Lite (RGB and depth), `x500_mono_cam` one camera |
 
-How it maps onto the simulator's semantics, so runs from the two backends
-compare:
+#### The world PX4 flies in
 
-* **Control.** PX4 is flown in offboard mode, leg by leg, with velocity
-  setpoints toward the next waypoint at its commanded speed, slowing to arrive,
-  steering on the position the aircraft believes it has. The last 3 m of a
-  landing are PX4's own landing mode. Telemetry is PX4's local position,
-  relative to where it stood on the pad, one `UAVState` per 0.1 s of simulated
-  time.
+The backend does not drop a file into PX4's own worlds directory. For every
+flight it:
+
+1. writes the world with `gazebo.scene.write_scene(..., px4=True)` (the same
+   writer as the replay) into
+   `~/.cache/waypoint/px4/<run>/scene/world.sdf`. A path without spaces, because
+   SDF URIs do not survive the space in `VS Code/`.
+2. starts `gz sim -s -r` on it, plus `gz sim -g` for the window.
+3. starts PX4 in standalone mode, which attaches to a running Gazebo rather than
+   launching its own:
+   - `PX4_GZ_STANDALONE=1`
+   - `PX4_GZ_WORLD=waypoint` (the world's name)
+   - `PX4_SIM_MODEL=gz_x500`
+   - `PX4_GZ_MODEL_POSE=<launch pad>`
+   - `PX4_GZ_MODELS=<checkout>/Tools/simulation/gz/models`
+
+   PX4 runs as `bin/px4 -d build/px4_sitl_default/etc -w <fresh dir>`, so no
+   parameters carry over between flights.
+
+The world holds the terrain, buildings and trees, plus everything the verifier
+reasoned about: the geofence walls, the no-fly volumes, the planned obstacles,
+the launch pad, and the landing pad once a plan names it. Each plan's route is
+drawn as it takes over, and each obstacle that appears in flight is drawn when
+it appears. Only the ground has collision: the fence, the zones and the
+obstacles are glass, seen and never hit, because keeping out of them is the
+verifier's and the monitor's job.
+
+Only one PX4 flight can run at a time, because PX4's MAVLink port and the
+world's name are fixed. Each flight takes about 20 s to start; a start that
+stalls (PX4 now and then does) is retried up to three times. If a flight is
+killed hard and leaves Gazebo behind, `pkill -f gz-sim-main` clears it; the
+backend refuses to start next to a stray `waypoint` world rather than fly in
+the wrong one.
+
+#### How it maps onto the simulator, so the two compare
+
+* **Control.** PX4 is flown in offboard mode, over MAVLink (pymavlink), leg by
+  leg. It uses velocity setpoints toward the next waypoint at the waypoint's
+  commanded speed, slowing to arrive, and steers on the position the aircraft
+  believes it has. The last 3 m of a landing are PX4's own landing mode.
+  (Uploading the plan as a PX4 mission instead would lose waypoint-by-waypoint
+  progress, which the `at_waypoint` fault triggers and the monitor need, and
+  the paused clock while the planner replans.)
+* **Telemetry.** PX4's local position, relative to where it stood on the pad,
+  as one `UAVState` per 0.1 s of simulated time. Positions are interpolated
+  between PX4's own samples, which arrive every 16 or 24 ms.
 * **Battery.** The simulator's model (metres and seconds per percent, plus
-  drain spikes), not PX4's simulated battery, so both spend the budget the
-  verifier checked.
-* **Crashes.** Judged against the `World` the same way. Buildings are drawn in
-  Gazebo but are not physics bodies, so an impact is detected by the backend,
-  which then cuts the motors; the ground is a physics body.
-* **Faults.** One schedule drives both. An obstacle joins the obstacle list and
-  is drawn in Gazebo; a battery spike drains the shared model; a gust is a
-  drag force on the airframe that PX4 has to fight; GPS drift offsets the
-  position the backend steers on, as in the simulator (PX4's own estimator is
-  left alone).
+  drain spikes), not PX4's simulated battery. Both backends then spend the
+  budget the verifier checked.
+* **Crashes.** Judged against the `World` the same way. Buildings are drawn but
+  are not physics bodies, so the backend detects an impact and cuts the motors.
+  If one of PX4's own failsafes takes the aircraft (it leaves offboard by
+  itself), the backend records `PX4_FAILSAFE`, stops steering, and lets PX4
+  land it.
+* **Faults (`emulate`, the default).** One schedule drives both backends:
+  - an obstacle joins the obstacle list and is drawn in Gazebo;
+  - a gust is a drag force on the airframe, which PX4 has to fight;
+  - a battery spike drains the shared battery model;
+  - GPS drift offsets the position the backend steers on, so the aircraft flies
+    off its line believing it is on it, as in the simulator.
+* **Faults (`px4`).** Each fault is first offered to PX4 through
+  `MAV_CMD_INJECT_FAILURE` (this sets `SYS_FAILURE_EN=1`):
+  - **Battery:** PX4 v1.17 with Gazebo accepts the battery failure. PX4's own
+    battery then collapses and its failsafe lands the aircraft; the backend
+    reads that battery and reports `battery_depleted`.
+  - **GPS:** PX4 does not answer the GPS failure. It is handled only by PX4's
+    older simulator bridge, not the Gazebo one, so `failure gps off` does
+    nothing here, and the drift is imitated instead.
+  - **Gusts and obstacles:** PX4 has no injection for them, so they are always
+    imitated.
+
+  Every fault's event in the run file says how it was delivered. Runs in this
+  mode test PX4's failsafes, and are not meant to compare with the custom
+  backend.
 * **Replanning.** The aircraft holds position and, by default, Gazebo is
   paused, so the planner's thinking costs no flight time, as in the simulator.
 
-Each flight starts PX4 and Gazebo afresh (about 15 s) in a temporary directory
-under `~/.cache/waypoint/px4/`, and stops them when it ends. Only one PX4 flight
-can run at a time: PX4's MAVLink port and the world's name are fixed. If a
-flight is killed hard and leaves Gazebo behind, `pkill -f gz-sim-main` clears
-it; the backend refuses to start next to a stray `waypoint` world rather than
-fly in the wrong one.
+#### The end-to-end check
+
+`scripts/px4_check.py` flies one scenario through the unmodified loop with
+scripted planners (no API key). The scenario has a fence, a no-fly zone, a
+planned water tower, and a crane that appears 40 m up the first leg. It prints
+PASS or FAIL for each step:
+
+1. the PX4 world shows the fence, the zone and the tower, as glass;
+2. PX4 and Gazebo boot;
+3. the plan is flown and lands;
+4. telemetry streams back, one state per 0.1 s, inside the fence;
+5. the crane triggers a replan, the flight resumes on the detour, and it keeps
+   clear;
+6. the custom simulator verifies and replans the same way, with a similar
+   flight.
+
+`--gui` to watch, `--speed N`, `--keep` to keep the world and PX4's logs.
+`WAYPOINT_PX4_TESTS=1 pytest tests/test_px4.py` also flies real PX4.
+
+#### Cameras, for perception that is not symbolic
+
+With `WAYPOINT_PX4_MODEL=x500_depth`, Gazebo publishes the OAK-D Lite's frames,
+headless or with the window:
+- RGB, 1920 x 1080, on `.../camera_link/sensor/IMX214/image`;
+- depth, 640 x 480, on `/depth_camera`.
+
+`waypoint.feedback.GazeboCameraPerceptionSource` is the `PerceptionSource` that
+will turn them into obstacles. It is a stub for now: its docstring sets out the
+design (frames through a bridge process, a detector, depth and pose to place
+each detection in the world), and `get_events` raises until it is built.
 
 ### 6. Exercise one stage at a time
 
@@ -518,8 +678,11 @@ python -m waypoint.experiments report experiments/runs/<stamp>
 Each batch writes per-mission and per-replan CSVs, a summary, and plots of the
 verifier's catch rate, replan latency by fault type, how replans resolved, and
 path length against an unconstrained baseline. `--flat` and
-`--no-violation-feedback` are the ablations. [experiments/README.md](experiments/README.md)
-defines every metric and how to reproduce it.
+`--no-violation-feedback` are the ablations. `--backend px4` flies the same batch
+on PX4 SITL in Gazebo (one flight at a time, about 20 s to start each;
+`WAYPOINT_PX4_SPEED=4` runs it faster than real time).
+[experiments/README.md](experiments/README.md) defines every metric and how to
+reproduce it.
 
 ### Troubleshooting
 
@@ -532,6 +695,11 @@ defines every metric and how to reproduce it.
 | `no Python can import Gazebo's bindings` | Make `.venv-gz` as shown in [Setup](#setup), or point `WAYPOINT_GZ_PYTHON` at a Python that can `import gz.transport` |
 | Gazebo window opens but the aircraft never moves | A previous run is still holding the world: `pkill -f gz-sim-main`, then try again |
 | Plan rejected before flying | That is the verifier doing its job; the report says which waypoint and why. `--force` flies it anyway |
+| `no PX4 SITL build at ...` | `scripts/setup_px4.sh`, or point `WAYPOINT_PX4_DIR` at your PX4-Autopilot checkout |
+| `the px4 backend needs pymavlink` | `pip install -e ".[px4]"` (the setup script does this) |
+| `another Gazebo is already serving a world called 'waypoint'` | A replay or an earlier flight is still running: close it, or `pkill -f gz-sim-main` |
+| `PX4's startup script did not come up ... (gave up after 3 attempts)` | `pkill -f gz-sim-main; pkill -f bin/px4`, then retry; `python scripts/px4_check.py --keep` keeps PX4's log to read |
+| `Library not loaded: libprotobuf...` from any `gz` command | Homebrew upgraded protobuf ahead of Gazebo: see "If the build fails" in section 5c |
 
 ## Planner
 
@@ -820,9 +988,11 @@ The API does the same, and also raises the ceiling when the world needs it
 
 `Executor(plan, constraints=..., config=..., wind=..., faults=...)` flies a
 verified plan and yields a `UAVState` every `dt` (0.1 s by default). It is a
-small custom simulator rather than PX4/Gazebo: pure Python, no binary
-dependencies, fast enough to fly a mission in well under a second, and
-identical on macOS, Linux and Windows.
+small custom simulator: pure Python, no binary dependencies, fast enough to fly
+a mission in well under a second, and identical on macOS, Linux and Windows.
+It is the default backend; PX4 SITL in Gazebo is the other (section 5c), and
+it follows the same battery model, fault schedule and crash rules so the two
+compare.
 
 Three things make it a simulator rather than an interpolator:
 
@@ -894,6 +1064,12 @@ and no-fly zones as glass, the planned route as beads coloured by action, the
 launch and landing pads, and the aircraft. Nothing in it is a physics body
 except the aircraft, and the world has no gravity.
 
+`write_scene(run, out_dir, px4=True)` writes the same place for PX4 to fly in:
+gravity, the sensor systems PX4's airframe reads (IMU, barometer,
+magnetometer, GPS), a wind force system, ground the aircraft can stand on, and
+a place on Earth for PX4's GPS. The aircraft is left out, because PX4 spawns
+its own x500.
+
 `terrain.obj` is the ground, written as a mesh rather than an SDF heightmap
 because a heightmap cannot carry ground cover and wants a power-of-two image.
 The mesh is sampled on a 4 m grid (capped at 320 cells a side, so a city still
@@ -917,8 +1093,8 @@ past flight replays without re-simulating.
 ## Test
 
 ```bash
-.venv/bin/python -m pytest          # 423 tests, about 11 seconds
-WAYPOINT_PX4_TESTS=1 .venv/bin/python -m pytest tests/test_px4.py   # also fly real PX4 (about a minute)
+.venv/bin/python -m pytest          # 434 tests, about 10 seconds
+WAYPOINT_PX4_TESTS=1 .venv/bin/python -m pytest tests/test_px4.py   # also fly real PX4 (about 3 minutes)
 ```
 
 Every test mocks the planner's clients; autouse fixtures replace the real
@@ -926,7 +1102,10 @@ Gemini and OpenAI constructors with tripwires and clear `OPENAI_API_KEY` and the
 model overrides from the environment, so your `.env` cannot steer the suite, so a test that forgets to inject a fake client
 fails rather than dialling out. `tests/test_api.py` flies whole missions through
 the HTTP API using the bundled plans, so the pipeline, the event stream and the
-run files are covered without a key and without a network.
+run files are covered without a key and without a network. `tests/test_px4.py`
+flies the PX4 backend against a fake PX4, so the suite needs neither PX4 nor
+Gazebo. With `WAYPOINT_PX4_TESTS=1` it also flies the real thing: a square,
+and the crane replan.
 
 ## Where the real pieces go
 
@@ -944,8 +1123,10 @@ run files are covered without a key and without a network.
   order (obstacle, battery, off route). Its thresholds live on `FeedbackConfig`.
   How the aircraft sees is a `PerceptionSource` (`perception.py`):
   `SymbolicPerceptionSource` reads the backend's obstacles, optionally within a
-  `sensor_range`, and `run_mission(perception=...)` takes any other, such as a
-  detector on a Gazebo camera feed. GPS degradation is the obvious next trigger.
+  `sensor_range`, and `run_mission(perception=...)` takes any other.
+  `GazeboCameraPerceptionSource` (`gazebo_camera.py`) is the stub for one that
+  detects obstacles in the x500_depth's camera frames; its docstring is the
+  design. GPS degradation is the obvious next trigger.
 - `waypoint/orchestrator/loop.py`: the closed loop. It touches the aircraft only
   through `ExecutorBackend`, and every decision goes through `MissionLog.add`.
   `scripts/explore.py` flies every mission through it; `waypoint/api/missions.py`
@@ -958,6 +1139,7 @@ run files are covered without a key and without a network.
   `px4=True` for PX4 to fly in), `launch.py` runs the three processes and flies
   the ticks, `bridge.py` is the only thing that talks to Gazebo in a replay.
 - `waypoint/px4/`: `backend.py` flies plans, `link.py` is the MAVLink link,
-  `sitl.py` starts and stops PX4 and Gazebo. A different airframe is a
-  different `MODEL` in `sitl.py` plus its parameters in `PARAMS`; a perception
-  source on a Gazebo camera would read the world this backend starts.
+  `sitl.py` starts and stops PX4 and Gazebo. A new airframe is a name in
+  `MODELS` (`sitl.py`) plus any parameters it needs in `PARAMS`
+  (`backend.py`). A new PX4-native fault is an entry in `NATIVE_FAILURES`.
+  `scripts/px4_check.py` is the end-to-end check after any change here.
