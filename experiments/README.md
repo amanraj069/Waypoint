@@ -25,7 +25,7 @@ skipped with a note.
 ## Run
 
 ```bash
-# the 20 missions in experiments/missions.json, planner as designed
+# the 36 missions in experiments/missions.json, the full system
 python -m waypoint.experiments run
 
 # the ablations, one at a time
@@ -53,6 +53,8 @@ python -m waypoint.experiments report experiments/runs/<a> experiments/runs/<b> 
 | --- | --- | --- |
 | `--missions` | `experiments/missions.json` | the batch file |
 | `--backend` | `custom` | which `ExecutorBackend` flies it: `custom`, or `px4` for PX4 SITL in Gazebo (one flight at a time, about 20 s to start each; `WAYPOINT_PX4_SPEED=4` runs it faster than real time; see the main README) |
+| `--system` | `full` | the loop's capabilities: `full`, `classic` (as first published), `runtime-guard`, `no-gate`, or a preset with switches (`full,no-repair`, `full,replan=llm`); see the main README's "The system" |
+| `--systems` | | several systems separated by `;`, each flown under every planner condition, e.g. `"full;classic;runtime-guard"` |
 | `--flat` | off | ablation: one flat route instead of named subtasks |
 | `--no-violation-feedback` | off | ablation: the replan prompt says a plan was rejected, not why |
 | `--all-conditions` | off | all four combinations of the two ablations |
@@ -85,12 +87,17 @@ cheapest useful batch flies only the conditions you are comparing
 Every mission is planned from scratch, so a batch spends tokens: one
 call for the first plan, one per correction after a rejection, and one or more
 per in-flight replan, for the verified run and again for the baseline's
-in-flight replans. Twenty missions under one condition is typically 50 to 100
+in-flight replans. Thirty-six missions under one condition is typically 90 to 180
 calls; `--all-conditions` is four times that.
 
 ## The batch file
 
-`missions.json` holds twenty missions: five in open space and three or four in
+`missions.json` holds thirty-six missions. The first twenty are the original
+batch, texts unchanged so old results can be re-scored; sixteen more ask for
+order ("first ... then ..."), avoid zones ("never fly over the lake"), named
+sides, low passes and overhead shots, and five of the thirty-six cannot be flown
+as asked at all (a point outside the fence, a photograph above the ceiling).
+The original twenty are five in open space and three or four in
 each bundled place (Lodhi Garden, the Central Vista, Chandni Chowk, Munnar).
 Some are ordinary; some ask for something the envelope makes hard (a point
 1500 m away, a climb to 200 m, a pass through a grove at 8 m, a run below the
@@ -118,12 +125,23 @@ drift, firing in the first 40 s. The schedule is drawn from a seed made of
 baseline flies the same faults, and the same seed reproduces them exactly. The
 schedule each flight used is in the manifest.
 
+### Ground truth
+
+Every mission has an `expect` entry, written by hand and shown to no planner:
+the targets (landmark names, or points relative to the origin), how each must
+be served (CAPTURE, HOVER or OVERFLY; views, sides, overhead, height), whether
+they are ordered, what to avoid, and `feasible` (false for a mission that
+cannot be flown as asked, null where that is not certain). It has the same
+shape as the intent extractor's output and is grounded the same way
+(`waypoint/experiments/truth.py`). `tests/test_experiments.py` checks that every
+landmark it names exists and that its `feasible` agrees with `assess()`.
+
 ## What is flown
 
 For each condition, mission and repeat, two flights:
 
 1. **Verified**: the closed loop exactly as `python -m waypoint.orchestrator.run_full`
-   flies it, with the condition's planner.
+   flies it, with the condition's planner and system.
 2. **Baseline**: the *same first plan*, the same faults and the same backend,
    with the verifier replaced by one that runs every check, records what it
    found, and refuses nothing. In-flight replans still go to the planner, and
@@ -155,6 +173,26 @@ pad with no flat ground near it) or that raises is recorded with its `error`
 and the batch carries on.
 
 ## How each metric is computed
+
+**Mission accomplished.** Scored against the ground truth from the run file
+alone: the waypoints the aircraft actually reached (with their actions, where
+it reached them) and its track. Accomplished means every target served (from
+enough distinct sides, from the named sides, from above, at the asked height),
+in order when ordered, no avoid zone entered, the last plan ending with a LAND
+on the pad, and the flight landed under control. A touchdown blown off the pad
+by wind or a drifting fix is reported apart (`touchdown_error_m`), not counted
+as a different mission. The mean share of the mission done is reported beside
+it. For missions marked infeasible, the score is the refusal: refusing is right,
+flying anyway is not. Wilson 95% intervals throughout.
+
+**Intent extraction.** Where the system read an intent, the reading against the
+ground truth: exact (same targets, served the same way, same order flag, same
+avoid zones) and the target-set F1.
+
+**Repair, shield, hover.** How many rejected plans repair fixed on the ground
+and in the air and how fast; replan latency split by who answered (repair or
+the LLM); the share of flights where the shield changed a command; the flight
+time spent hovering through LLM replans.
 
 Every number comes from the mission logs and run files alone
 (`waypoint/experiments/metrics.py`), so `report` reproduces it from a result

@@ -10,13 +10,22 @@ loop can fly the real PX4 autopilot in Gazebo instead of the simulator.
 ```
 natural language mission
         -> world      (terrain + buildings)        [REAL: four Indian places, or OpenStreetMap]
+        -> intent     (what the mission asks for)  [REAL: LLM reads it under a strict schema, the world grounds it;
+                                                    a mission that cannot be flown as asked is refused here]
         -> planner    (LLM hierarchical planner)   [REAL: OpenAI, then Gemini; strict JSON schema]
-        -> verifier   (deterministic safety check) [REAL: shapely geometry, no model in the loop]
+        -> verifier   (deterministic checks)       [REAL: exact geometry, no model in the loop: safety AND intent]
+        -> repair     (deterministic fixes)        [REAL: detours, climbs, clamps, added viewpoints; LLM only if this fails]
         -> sim        (UAV executor)               [REAL: point-mass physics, wind, faults, collisions;
                                                     or PX4 SITL flying an x500 in Gazebo, --backend px4]
-        -> feedback   (perception + monitor)       [REAL: new obstacle on the route, battery short or failing, off route]
-        -> replan loop back into planner           [REAL: on the ground after a rejection, in the air from where it is]
+        -> shield     (runtime safety filter)      [REAL: control barrier functions on every velocity command]
+        -> feedback   (perception + monitor)       [REAL: new obstacle on the route, battery short or failing, off route;
+                                                    symbolic, or a depth camera on PX4]
+        -> replan     (tiered, from where it is)   [REAL: repair in milliseconds first, the LLM second, hovering meanwhile]
 ```
+
+Each capability after the planner is a switch (`--system`, section
+[The system](#the-system-what-runs-around-the-llm)); `full` is the default
+everywhere, and `classic` is the loop as first published, for comparison.
 
 There are two ways in. **The prompt** opens a place, takes a mission in plain
 English, and flies it:
@@ -37,8 +46,9 @@ replayed but flown live there, by PX4 (section 5c).
 waypoint/                 the repository
 ├── waypoint/             all the code, one importable package
 │   ├── world/            where it flies: terrain, buildings, landmarks
+│   ├── intent/           what a mission asks for: extraction, grounding, the INTENT check
 │   ├── planner/          English -> hierarchical Plan, via OpenAI or Gemini
-│   ├── verifier/         deterministic safety check of a Plan
+│   ├── verifier/         deterministic safety check of a Plan, and deterministic repair
 │   ├── sim/              point-mass physics, wind, fault injection (gazebo_backend.py: the PX4 backend's spec name)
 │   ├── feedback/         perception sources, and the in-flight monitor: needs_replan(), summarize_for_llm()
 │   ├── orchestrator/     the closed loop, its MissionLog, the CLI, run files
@@ -64,15 +74,16 @@ waypoint/                 the repository
 | --- | --- |
 | `waypoint.world` | `World`, `Terrain`, `Building`; procedural cities and an OpenStreetMap importer |
 | `waypoint.planner` | `plan()` / `replan()` against OpenAI, falling back to Gemini; `Waypoint`, `SubTask`, `Plan`, `Action`, `MissionConstraints` |
-| `waypoint.verifier` | `verify(plan, constraints) -> VerificationResult` (`passed`, `violations`); the checks live in `verifier/checks.py` |
-| `waypoint.sim` | `UAVState`, `Executor`, point-mass `dynamics`, `Wind`, `FaultSchedule`; `execute(plan)` yields a state per 0.1 s tick |
+| `waypoint.intent` | `extract_intent(mission, world)`, `check_intent(plan, intent)`, `assess(intent, ...)`, `evaluate(...)`; `MissionIntent`, `Target` |
+| `waypoint.verifier` | `verify(plan, constraints, intent=...) -> VerificationResult` (`passed`, `violations`); the checks live in `verifier/checks.py`, deterministic repair in `verifier/repair.py` |
+| `waypoint.sim` | `UAVState`, `Executor`, point-mass `dynamics`, `Wind`, `FaultSchedule`; `execute(plan)` yields a state per 0.1 s tick; `SafetyShield`, the runtime filter |
 | `waypoint.backends` | `ExecutorBackend` (`prepare`, `run(plan)`, `close()`, ...) and `make_backend("custom" \| "px4")` |
 | `waypoint.px4` | `Px4Backend` (also `waypoint.sim.gazebo_backend.Px4GazeboBackend`): PX4's x500 flown in offboard mode through Gazebo; `Sitl` starts and stops PX4 and Gazebo; `Link` is the MAVLink side |
-| `waypoint.feedback` | `needs_replan(history) -> ReplanTrigger | None`, `summarize_for_llm(snapshot, trigger)`, `path_deviation()`; `PerceptionSource`, `SymbolicPerceptionSource`, and the `GazeboCameraPerceptionSource` stub |
-| `waypoint.orchestrator` | `run_mission(mission, constraints, faults, backend) -> MissionLog` and the `run_full` CLI |
+| `waypoint.feedback` | `needs_replan(history) -> ReplanTrigger | None`, `summarize_for_llm(snapshot, trigger)`, `path_deviation()`; `PerceptionSource`, `SymbolicPerceptionSource`, and `GazeboCameraPerceptionSource` (obstacles from the PX4 depth camera) |
+| `waypoint.orchestrator` | `run_mission(mission, constraints, faults, backend, system=...) -> MissionLog`, `SystemOptions` (`FULL`, `CLASSIC`, ...) and the `run_full` CLI |
 | `waypoint.gazebo` | `write_scene(run)` and `play(run)`: the 3D view |
 | `waypoint.api` | FastAPI over the pipeline: worlds, missions (streamed as they happen), runs |
-| `waypoint.experiments` | `run_batch(config)` and `python -m waypoint.experiments run/report`: catch rate, replan success and latency, safety vs optimality, ablations |
+| `waypoint.experiments` | `run_batch(config)` and `python -m waypoint.experiments run/report`: catch rate, mission success against hand-written ground truth, replan success and latency, safety vs optimality, systems and ablations |
 
 Every path in the code comes from `waypoint/paths.py`, so a command behaves the
 same whichever directory you run it from. Bundled plans, fault schedules and
@@ -654,10 +665,40 @@ headless or with the window:
 - RGB, 1920 x 1080, on `.../camera_link/sensor/IMX214/image`;
 - depth, 640 x 480, on `/depth_camera`.
 
-`waypoint.feedback.GazeboCameraPerceptionSource` is the `PerceptionSource` that
-will turn them into obstacles. It is a stub for now: its docstring sets out the
-design (frames through a bridge process, a detector, depth and pose to place
-each detection in the world), and `get_events` raises until it is built.
+`waypoint.feedback.GazeboCameraPerceptionSource` turns the depth frames into
+obstacles, so the loop can see what no map has:
+
+```python
+from waypoint.feedback.gazebo_camera import GazeboCameraPerceptionSource
+backend = Px4Backend(model="x500_depth")
+camera = GazeboCameraPerceptionSource.on(backend)      # starts with the flight
+run_mission(mission, constraints, faults, backend, perception=camera, system=FULL)
+```
+
+- `waypoint/gazebo/depth_bridge.py` (gz-only, under `.venv-gz`) writes the newest
+  depth frame and the airframe's full pose (attitude included: it tilts as it
+  accelerates) to one file, replaced atomically.
+- `waypoint/feedback/depth.py` back-projects it into the world, takes away
+  everything the map explains (ground, buildings, known obstacles, the drawn
+  fence and no-fly walls), clusters what is left on a 1 m grid and fits a
+  circle to each cluster's visible arc. Detection is geometric, not learned:
+  anything solid the map lacks is an obstacle, whatever it looks like.
+- The source confirms a cluster over two frames, then reports it once, frozen;
+  a clearly bigger later estimate is reported as well.
+- Worlds flown with a camera airframe draw no route beads or pad beams (the
+  camera would see them) and show obstacles that appear as solid.
+
+The depth sensor reaches about 19 m, which is why the in-flight repair
+(milliseconds) matters with it. The end-to-end check, with the crane known to
+the camera alone and the shield off, so nothing else covers for it:
+
+```bash
+python scripts/camera_check.py            # about 3 minutes; --gui to watch
+```
+
+On this machine: the crane was seen 23 m from its centre, placed 0.0 m from
+where it stands (radius 6.5 m against 6.0 m), and flown round by repair with no
+keep-out breach.
 
 ### 6. Exercise one stage at a time
 
@@ -670,10 +711,17 @@ python scripts/try_verifier.py --plan data/plans/north_field_and_tower.json \
 ### 7. Run experiments (needs an LLM key)
 
 ```bash
-python -m waypoint.experiments run --limit 5                 # a first look
-python -m waypoint.experiments run --all-conditions          # 20 missions x 4 ablation conditions
+python -m waypoint.experiments run --limit 5                 # a first look, the full system
+python -m waypoint.experiments run --systems "full;classic;runtime-guard" --repeats 2
+python -m waypoint.experiments run --all-conditions          # 36 missions x 4 planner ablations
 python -m waypoint.experiments report experiments/runs/<stamp>
+python -m waypoint.experiments report experiments/runs/<old> --missions experiments/missions.json
 ```
+
+Every mission of the batch carries hand-written ground truth (`expect`) that no
+planner sees; flights are scored on it from their run files, so "mission
+accomplished" means the same for every system, and batches flown before the
+ground truth existed can be re-scored (the last line).
 
 Each batch writes per-mission and per-replan CSVs, a summary, and plots of the
 verifier's catch rate, replan latency by fault type, how replans resolved, and
@@ -789,9 +837,24 @@ fix everything at once.
 | `TURN_FEASIBILITY` | A corner sharper than the airframe can fly at the speed commanded through it |
 | `BATTERY` | A route whose linear energy estimate exceeds `battery_budget_pct` |
 | `MIN_SEPARATION` | A waypoint or leg inside an obstacle's keep-out radius (`obstacle.radius + min_separation`) |
-| `BUILDING` | A waypoint inside a building, or a leg that flies through one (needs a [world](#the-world)) |
+| `BUILDING` | A waypoint inside a building or less than `roof_clearance` above its roof, or a leg that crosses one lower than its roof plus `roof_clearance` (needs a [world](#the-world)) |
 | `TERRAIN` | A waypoint underground or below the ground-clearance minimum, or a leg that flies into a hillside |
-| `LANDING` | A LAND waypoint on ground too uneven to set down on, or one that is not at ground level |
+| `LANDING` | A LAND waypoint on ground too uneven to set down on, within 2 m of anything standing, or not at ground level |
+| `INTENT` | Only with an `intent`: the plan does not do what the mission asked (a target not photographed, too few sides, the wrong order, an avoid zone crossed, not ending on the pad); see [Intent](#intent-what-the-mission-asks-for) |
+
+Three things make the checks exact rather than approximate:
+
+- **Terrain is not sampled.** Bilinear ground is a quadratic along a straight
+  leg inside each grid cell, so the minimum clearance is solved for, cell by
+  cell. No ridge can hide between samples (`tests/test_soundness.py` checks it
+  against a 25 cm walk).
+- **Legs are judged as flown.** A leg that climbs faster than the airframe can
+  (`max_climb_rate`, 4 m/s) is flown below its straight line, so the building
+  and terrain checks use the climb-limited profile. Re-flying every verified
+  plan from the published batches in calm air found two plans that passed the
+  old checks and crashed; both are refused now.
+- **Room to stop.** A waypoint over a roof needs `roof_clearance` above it: an
+  aircraft arriving there sinks past it before it holds.
 
 Each `Violation` carries its `type`, the `waypoint_index` it belongs to (0-based
 into the flattened plan, `None` for whole-plan findings like battery), a
@@ -821,6 +884,9 @@ The *aircraft* model lives on `VerifierConfig` and is fully configurable:
 | `max_turn_angle_deg` | 150 | Turn the aircraft can make at or below the reference speed |
 | `turn_reference_speed` | 5 | Above this, the allowed turn shrinks in proportion to speed |
 | `geofence_margin` | 0 | Warn when a waypoint is inside the fence but within this margin |
+| `min_ground_clearance` | 5 | Metres every leg stays above the ground |
+| `roof_clearance` | 3 | Metres over a roof a waypoint sits, and a leg crosses |
+| `max_climb_rate` | 4 | Vertical speed cap; steeper legs are judged on the profile actually flown |
 | `home` | (0, 0, 0) | Start and end point, so the first leg is home → waypoint 0 |
 
 Bad *constraints* (a self-intersecting geofence, a degenerate no-fly polygon)
@@ -836,6 +902,128 @@ python scripts/try_verifier.py --plan /tmp/plan.json --shrink 0.3 --hazards
 It verifies the plan against the normal envelope, then against a geofence
 shrunk about its centre (plus, with `--hazards`, a no-fly zone across the route
 and an obstacle on its far end) and prints the full violation report.
+
+
+## The system: what runs around the LLM
+
+The LLM decomposes the mission and writes the route. Everything around it is
+deterministic, and each piece is a switch on `SystemOptions`
+(`waypoint/orchestrator/options.py`), so it can be turned off and measured:
+
+| Switch | `full` | `classic` | What it does |
+| --- | --- | --- | --- |
+| `intent` | on | off | Read the mission into checkable requirements; refuse what cannot be flown; check every plan against what is left |
+| `repair` | on | off | Fix a rejected plan geometrically before asking the LLM again |
+| `replan` | `tiered` | `llm` | In the air, repair (or trim for battery) first; the LLM only if that fails |
+| `hold` | `hover` | `freeze` | While the LLM thinks in the air, the aircraft hovers and burns battery; `freeze` stops the clock |
+| `shield` | on | off | The runtime safety filter under the controller |
+| `monitor_energy` | on | off | Verify in-flight plans with the monitor's energy model, so a new plan does not trip it again |
+| `subtask_feedback` | on | off | Tell the planner which subtask each violation is in, and which to keep |
+| `gate` | `preflight` | `preflight` | `runtime`: no preflight check, only a per-command guard; `none`: nothing checks anything |
+
+Presets: `full` (every entry point's default), `classic` (the loop as first
+published), `runtime-guard` (how runtime-only LLM agents on autopilots enforce
+safety: altitude clamped, a command outside the fence refused at dispatch, then
+replan), `no-gate`. Switches compose: `--system full,no-shield`,
+`--system full,replan=llm`. `run_mission` defaults to `classic` so library
+code keeps its behaviour; pass `system=FULL`.
+
+### Intent: what the mission asks for
+
+`waypoint.intent` makes "does the plan do what was asked?" as deterministic as
+"is it safe?".
+
+1. **Extract.** The LLM is asked one narrow question under a strict schema
+   (`intent/extract.py`): which targets to photograph, hover at or fly over;
+   from how many sides, which sides, from above, at what height; in what order;
+   what never to fly over. It names landmarks by copying them from the list it
+   is given. `WAYPOINT_INTENT_VOTES=3` asks three times and keeps the reading
+   most agree on.
+2. **Ground.** A landmark's position, size and height come from the world,
+   never from the model, so a hallucinated coordinate cannot leak in. A hill is
+   the ground itself, so its slopes are the subject of its photograph, not in
+   the way of it.
+3. **Assess.** Before planning, `assess()` asks whether the mission can be
+   flown at all: a target 1300 m outside the fence, a photograph 200 m up under
+   a 120 m ceiling, a route the battery cannot cover even at its shortest. Such
+   a mission is refused with the reason (`outcome: infeasible`) instead of
+   being flown wrong.
+4. **Check.** `check_intent()` runs with every verification. A photograph
+   counts from a CAPTURE waypoint within reach of the target (in proportion to
+   its size: 20 m for a field corner, about 54 m for a 36 m tomb) with a clear
+   line of sight (buildings and terrain in between block it; the target's own
+   buildings do not). Views count as distinct sides at least 60 degrees apart
+   around it, or, for a large target such as a dam, well apart along it.
+   Order is a greedy chain over every waypoint that serves each target.
+   Every miss names a fix that is itself flyable: a viewpoint inside the
+   envelope with a clear line of sight.
+
+```
+[INTENT] The mission asks to photograph 'Bara Gumbad' from 2 distinct sides, but the plan
+sees it from only 1 (south); views count as distinct when at least 60 deg apart around it.
+Add a CAPTURE from another side, e.g. at (5, 248, 20.7).
+```
+
+In the air, the intent shrinks to what is left (`remaining()`, from the
+waypoints actually reached). If no plan can both serve everything left and stay
+safe, the mission gives way and safety never does: the plan is accepted with
+its INTENT findings as warnings, and `intent_relaxed` records what was given up.
+
+### Repair: fix it without asking again
+
+`waypoint.verifier.repair` applies the remedies the violations name: clamp a
+speed or an altitude, climb in place before a leg steeper than the airframe can
+fly, lift a low leg over the high ground, take a leg round a building, a no-fly
+zone or an obstacle by the shortest path on a visibility graph inside the fence
+(or over the top, whichever is shorter), pull a waypoint back inside the fence,
+put a LAND on usable ground, add the viewpoint the intent check proposed at
+the cheapest place in the route. Every round re-runs the full verifier; a plan
+comes back only if it passes, so repair can never relax anything.
+
+```bash
+python scripts/replay_repairs.py experiments/runs/<stamp>    # every rejected plan of a batch, through repair
+```
+
+On the 264 plans the verifier rejected in the published batches, repair
+produced a passing plan for 97%, in a median of 5 ms, adding a median 3% to
+the route. The LLM's own corrections fixed 75%, in seconds per attempt.
+
+### Replanning in the air
+
+When the monitor fires, the `tiered` policy tries, in order:
+
+1. **repair** the rest of the route from where the aircraft is, against what
+   changed (a new obstacle, an off-route position): milliseconds;
+2. for a **battery** shortfall, **trim**: give up the phase that saves the
+   most distance, then the next, until what is left is flyable; at worst, go
+   straight to the landing pad. The observed drain trend is trusted up to 1.5x
+   the first time (a passing blip should not cost the mission) and in full when
+   the monitor fires again;
+3. the **LLM**, with the situation, the intent still to do, and its verify,
+   repair and correct loop. With `hold: hover` the aircraft hovers for as long
+   as that takes, wind and faults still acting.
+
+### The shield: safety at run time
+
+`waypoint.sim.shield.SafetyShield` filters every velocity command, in the
+custom simulator and on PX4 alike. Each hazard near the aircraft is a barrier
+function (obstacle keep-outs and tops, buildings and roofs, no-fly zones, the
+geofence, the ground, the ceiling), and the command is projected onto the set
+that satisfies all of them (Dykstra's algorithm): far from everything nothing
+changes, near a boundary the aircraft slides along it. It is braking-aware
+(it starts slowing in time to stop), cancels wind the autopilot does not
+(a disturbance observer), and compares the GPS fix with the airframe's own
+measured motion, so a drifting fix cannot steer it into something.
+
+```bash
+python scripts/shield_trial.py experiments/runs/<stamp>          # re-fly a batch's plans, shield off and on
+python scripts/shield_trial.py --calm experiments/runs/<stamp>   # no wind, no faults: the verifier's false negatives
+```
+
+Re-flying the 169 verified plans of the published batches under their own
+faults, with nothing replanning: crashes 4.1% without the shield, 0.6% with
+it; keep-out breaches 29.0% and 0.6%. The plans as the LLM first wrote them,
+unverified: crashes 25.5% and 1.5%.
 
 
 ## The world
