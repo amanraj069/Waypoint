@@ -244,10 +244,10 @@ def test_a_chosen_launch_point_stands_on_the_ground_under_it():
     from waypoint.api.catalog import load_world
 
     world = load_world("lodhi")           # gentle ground: the pick is kept
-    x, y, z = home_for(world, (150.0, -120.0))
+    x, y, z = home_for(world, (150.0, -140.0))  # clear ground, 5 m from anything standing
 
-    assert (x, y) == (150.0, -120.0)
-    assert z == pytest.approx(world.elevation_at(150.0, -120.0), abs=0.01)
+    assert (x, y) == (150.0, -140.0)
+    assert z == pytest.approx(world.elevation_at(150.0, -140.0), abs=0.01)
     assert z != 0.0, "this world is not flat, so a moved pad should not be at zero"
 
 

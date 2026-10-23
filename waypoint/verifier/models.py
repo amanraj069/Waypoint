@@ -25,6 +25,13 @@ class ViolationType(str, Enum):
     BUILDING = "BUILDING"
     TERRAIN = "TERRAIN"
     LANDING = "LANDING"
+    #: Not safety: the plan does not do what the mission asked (see `waypoint.intent`).
+    INTENT = "INTENT"
+
+
+#: The violation types about safety. A plan with a blocking one of these never
+#: flies; INTENT is the only type a mission may relax, and only in the air.
+SAFETY_TYPES = frozenset(t for t in ViolationType if t.value != "INTENT")
 
 
 class Severity(str, Enum):
@@ -58,6 +65,14 @@ class Violation(BaseModel):
         description="Feedback for the planner: what is wrong, by how much, and how to fix it."
     )
     severity: Severity = Severity.ERROR
+    fix: dict | None = Field(
+        default=None,
+        description=(
+            "A concrete remedy a machine can apply, when the check found one: e.g. "
+            '{"kind": "add_waypoint", "action": "CAPTURE", "at": [x, y, z], "target": name}. '
+            "The deterministic repair uses it; the description already says it in words."
+        ),
+    )
 
     @property
     def blocking(self) -> bool:
@@ -90,6 +105,29 @@ class VerificationResult(BaseModel):
         """The violation descriptions, ready for `planner.replan()`."""
         return [v.description for v in self.violations]
 
+    def by_subtask(self, subtasks: list[str]) -> list[str]:
+        """The descriptions grouped by the phase they are in, ready for `planner.replan()`.
+
+        `subtasks` names the phase of every waypoint, in flying order. Each
+        violation is tagged with its phase (or "whole plan"), and a last line
+        names the phases with nothing wrong, so a hierarchical planner fixes
+        only what is broken and keeps the rest exactly as it was.
+        """
+        out = []
+        broken: set[str] = set()
+        for v in self.violations:
+            phase = subtasks[v.waypoint_index] if v.waypoint_index is not None and v.waypoint_index < len(subtasks) else None
+            if phase is not None and v.blocking:
+                broken.add(phase)
+            out.append(f"[{'subtask ' + repr(phase) if phase else 'whole plan'}] {v.description}")
+        fine = [s for s in dict.fromkeys(subtasks) if s not in broken]
+        if fine and broken:
+            out.append(
+                "These subtasks have nothing wrong with them; keep them exactly as they are unless a fix "
+                "elsewhere needs them to change: " + ", ".join(repr(s) for s in fine) + "."
+            )
+        return out
+
     def of_type(self, violation_type: ViolationType) -> list[Violation]:
         return [v for v in self.violations if v.type is violation_type]
 
@@ -120,6 +158,12 @@ class VerifierConfig(BaseModel):
     # at or below `turn_reference_speed`, and proportionally less above it.
     max_turn_angle_deg: float = Field(default=150.0, gt=0, le=180)
     turn_reference_speed: float = Field(default=5.0, gt=0)
+
+    # The fastest the aircraft climbs. A leg steeper than this at its speed is
+    # not flown straight: the controller keeps its horizontal speed and climbs
+    # at this rate, so the aircraft sags below the line until it catches up.
+    # The building and terrain checks judge a climbing leg on that profile.
+    max_climb_rate: float = Field(default=4.0, gt=0, description="Vertical speed cap, m/s, as the simulator flies it.")
 
     # Optional soft margin inside the geofence; 0 disables the warning.
     geofence_margin: float = Field(default=0.0, ge=0)

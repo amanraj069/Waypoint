@@ -16,6 +16,7 @@ import math
 from collections.abc import Sequence
 
 from pydantic import BaseModel, Field
+from shapely.geometry import Point
 
 from waypoint.planner.models import Obstacle
 from waypoint.world.models import World
@@ -26,6 +27,8 @@ PAD_RADIUS = 3.0
 MAX_SLOPE_DEG = 8.0
 #: And the most the ground may rise or fall across that footprint.
 MAX_DROP = 0.9
+#: How far beyond the footprint nothing may stand: a descent drifts in the wind.
+DESCENT_MARGIN = 2.0
 
 
 class Site(BaseModel):
@@ -91,7 +94,12 @@ def survey(world: World | None, x: float, y: float, radius: float = PAD_RADIUS) 
         heights.append(height)
         slopes.append(math.degrees(math.atan2(abs(height - centre), radius)))
 
+    # Clear across the whole pad and a margin round it, not just at its centre:
+    # a pad 0.4 m from a wall is a crash the moment the descent drifts.
     building = world.collides(x, y, centre + 0.5)
+    if building is None:
+        near = world.obstructions(Point(x, y).buffer(radius + DESCENT_MARGIN))
+        building = next((b for b in near if b.roof > centre + 0.5), None)
     return Site(
         x=round(x, 2),
         y=round(y, 2),
