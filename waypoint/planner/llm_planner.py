@@ -54,6 +54,7 @@ RESPONSE_FORMAT = {
 
 if TYPE_CHECKING:  # avoids a cycle: world imports planner.models
     from google import genai
+    from waypoint.intent.models import MissionIntent
     from waypoint.world.models import World
 
 log = logging.getLogger(__name__)
@@ -158,6 +159,7 @@ def plan(
     home: tuple[float, float, float] | None = None,
     landing: tuple[float, float, float] | None = None,
     options: PlannerOptions = DEFAULT_OPTIONS,
+    intent: "MissionIntent | None" = None,
 ) -> Plan:
     """Turn a natural language mission into a validated hierarchical Plan.
 
@@ -169,7 +171,7 @@ def plan(
     """
     return _request_plan(
         mission_text=mission_text,
-        user_prompt=build_plan_prompt(mission_text, constraints, world, home, landing, options),
+        user_prompt=build_plan_prompt(mission_text, constraints, world, home, landing, options, intent),
         client=client,
         options=options,
     )
@@ -187,6 +189,7 @@ def replan(
     landing: tuple[float, float, float] | None = None,
     situation: str | None = None,
     options: PlannerOptions = DEFAULT_OPTIONS,
+    intent: "MissionIntent | None" = None,
 ) -> Plan:
     """Ask for a new plan, telling the model exactly why the last one will not do.
 
@@ -199,11 +202,11 @@ def replan(
     if situation is not None:
         prompt = build_inflight_replan_prompt(
             mission_text, previous_plan, situation, constraints, world, home, landing,
-            violation_report, options,
+            violation_report, options, intent,
         )
     else:
         prompt = build_replan_prompt(
-            mission_text, previous_plan, violation_report, constraints, world, home, landing, options
+            mission_text, previous_plan, violation_report, constraints, world, home, landing, options, intent
         )
     return _request_plan(mission_text=mission_text, user_prompt=prompt, client=client, options=options)
 
@@ -215,8 +218,32 @@ def _request_plan(
     client: genai.Client | None,
     options: PlannerOptions = DEFAULT_OPTIONS,
 ) -> Plan:
-    """Ask each provider in turn, and validate the first answer.
+    """Ask each provider in turn for a plan, and validate the first answer."""
+    payload = request_json(
+        user_prompt,
+        system=system_prompt(options),
+        gemini_format=RESPONSE_FORMAT,
+        openai_format=OPENAI_RESPONSE_FORMAT,
+        client=client,
+        what="plan",
+    )
+    result = _build_plan(payload, mission_text)
+    return result if options.hierarchical else flatten(result)
 
+
+def request_json(
+    user_prompt: str,
+    *,
+    system: str,
+    gemini_format: dict,
+    openai_format: dict,
+    client: genai.Client | None = None,
+    what: str = "answer",
+) -> dict:
+    """One structured request: each provider in turn, down its model ladder; the decoded JSON object.
+
+    The plan and the mission intent both go through here, so they share the
+    provider fallback, the fail-fast clients and the token accounting.
     An explicit `client` is a Gemini client and pins the request to Gemini, so
     callers (and tests) that hand one in get exactly the provider they built.
     """
@@ -231,9 +258,9 @@ def _request_plan(
         is_last = position == len(providers) - 1
         try:
             if provider == "openai":
-                text, model = _ask_openai(user_prompt, options, attempts)
+                text, model = _ask_openai(user_prompt, system, openai_format, attempts)
             else:
-                text, model = _ask_gemini(user_prompt, options, client, attempts)
+                text, model = _ask_gemini(user_prompt, system, gemini_format, client, attempts)
         except _ProviderUnavailable:
             if is_last:
                 names = " and ".join({"openai": "OpenAI", "gemini": "Gemini"}[p] for p in providers)
@@ -241,11 +268,10 @@ def _request_plan(
                     f"The {names} API call failed and no model could serve it.\nTried:\n  "
                     + "\n  ".join(attempts)
                 ) from None
-            log.warning("%s could not plan; falling back to %s", provider, providers[position + 1])
+            log.warning("%s could not %s; falling back to %s", provider, "plan" if what == "plan" else "answer", providers[position + 1])
             continue
-        log.info("planned by %s %s", provider, model)
-        result = _build_plan(_decode(text), mission_text)
-        return result if options.hierarchical else flatten(result)
+        log.info("%s by %s %s", what, provider, model)
+        return _decode(text)
     raise PlannerAPIError("No planner provider was tried.")  # pragma: no cover
 
 
@@ -253,16 +279,16 @@ class _ProviderUnavailable(Exception):
     """This provider cannot serve the request; the next one might."""
 
 
-def _ask_gemini(user_prompt: str, options: PlannerOptions, client, attempts: list[str]) -> tuple[str, str]:
+def _ask_gemini(user_prompt: str, system: str, response_format: dict, client, attempts: list[str]) -> tuple[str, str]:
     client = client or get_client()
     ladder = get_model_ladder()
     for position, model in enumerate(ladder):
         try:
             interaction = client.interactions.create(
                 model=model,
-                system_instruction=system_prompt(options),
+                system_instruction=system,
                 input=user_prompt,
-                response_format=RESPONSE_FORMAT,
+                response_format=response_format,
                 timeout=REQUEST_TIMEOUT_S,
             )
         except api_errors() as exc:
@@ -309,7 +335,7 @@ def get_openai_client():
     return _openai_client
 
 
-def _ask_openai(user_prompt: str, options: PlannerOptions, attempts: list[str]) -> tuple[str, str]:
+def _ask_openai(user_prompt: str, system: str, response_format: dict, attempts: list[str]) -> tuple[str, str]:
     import openai  # noqa: PLC0415
 
     client = get_openai_client()
@@ -320,10 +346,10 @@ def _ask_openai(user_prompt: str, options: PlannerOptions, attempts: list[str]) 
             completion = client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": system_prompt(options)},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": user_prompt},
                 ],
-                response_format=OPENAI_RESPONSE_FORMAT,
+                response_format=response_format,
                 **extra,
             )
         except openai.OpenAIError as exc:
