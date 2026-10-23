@@ -52,8 +52,12 @@ class CustomSimBackend(ExecutorBackend):
             wind=self.wind,
             faults=faults,
             world=self.world,
+            shield=self.shield,
         )
         self._started = False
+
+    def hold(self, seconds: float) -> Iterator[UAVState]:
+        return self._require().hold(seconds)
 
     def run(self, plan: Plan) -> Iterator[UAVState]:
         executor = self._require()

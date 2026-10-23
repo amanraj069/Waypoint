@@ -98,6 +98,24 @@ class ExecutorBackend(ABC):
     def linger(self) -> None:
         """Keep any window the flight opened until the person closes it; nothing to do otherwise."""
 
+    def hold(self, seconds: float) -> Iterator[UAVState]:
+        """Hover in place for `seconds` of flight time, one state per tick.
+
+        The loop calls it after an in-flight replan, for as long as the
+        planner took, when the system holds by hovering. A backend whose
+        clock runs in real time (PX4) has already hovered through it and
+        yields nothing.
+        """
+        return iter(())
+
+    #: Whether the runtime safety filter sits under the controller (`waypoint.sim.shield`).
+    #: Set before `prepare`.
+    shield: bool = False
+
+    def shield_records(self) -> list[dict]:
+        """Every time the safety filter changed what the controller asked for."""
+        return [e for e in self.event_records() if e.get("type") == "SHIELD"]
+
 
 BACKENDS = ("custom", "px4")
 
