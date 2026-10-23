@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -28,6 +29,7 @@ from waypoint.feedback import FeedbackConfig, ReplanTrigger, TelemetrySnapshot, 
 from waypoint.feedback import PerceptionEvent, PerceptionSource, SymbolicPerceptionSource
 from waypoint.feedback import needs_replan, summarize_for_llm
 from waypoint.orchestrator.mission_log import MissionLog
+from waypoint.orchestrator.options import CLASSIC, SystemOptions
 from waypoint.orchestrator.runlog import RUNS_DIR, run_path, write_run
 from waypoint.planner import DEFAULT_CONSTRAINTS, MissionConstraints, Plan, PlannerError
 from waypoint.planner import plan as default_planner
@@ -36,6 +38,9 @@ from waypoint.planner.models import Action, Obstacle, SubTask, Waypoint
 from waypoint.sim import NO_FAULTS, FaultSchedule, SimConfig, UAVState, Wind
 from waypoint.verifier import VerificationResult, verify
 from waypoint.verifier.models import DEFAULT_CONFIG as VERIFIER_DEFAULTS
+from waypoint.verifier.models import ViolationType
+from waypoint.verifier.checks import polygon_of
+from waypoint.verifier.repair import relaxed, repair, trim_for_battery
 from waypoint.world.landing import find as find_site
 from waypoint.world.models import World
 
@@ -53,6 +58,8 @@ _UNSET: Any = object()
 # The simulator ticks at 10 Hz; printing every tick would bury the operator.
 PRINT_EVERY_SECONDS = 1.0
 FAILSAFE_DESCENT = 1.5
+#: The most an observed battery drain trend is scaled into an in-flight plan's energy model.
+PLANNING_DRAIN_CAP = 1.5
 FAILSAFE_TRANSIT = 4.0
 
 
@@ -79,6 +86,8 @@ class MissionReport:
     plans: list[dict] = field(default_factory=list)
     backend: dict | None = None
     outcome: str | None = None
+    #: How much of the mission's intent the flight delivered (`waypoint.intent.evaluate`), when it was read.
+    intent: dict | None = None
 
     @property
     def completed(self) -> bool:
@@ -165,6 +174,8 @@ def run_mission(
     verbose: bool = True,
     print_every: float = PRINT_EVERY_SECONDS,
     runs_dir: Path | None = _UNSET,
+    system: SystemOptions | None = None,
+    intent: Any = None,
 ) -> MissionLog:
     """Fly one mission through the whole closed loop, and log every decision.
 
@@ -183,15 +194,26 @@ def run_mission(
     flight is the plan, faults and all (a baseline that costs no planner calls
     once it is airborne).
 
+    `system` switches the loop's capabilities (`orchestrator.options`):
+    reading the mission's intent, deterministic repair, tiered in-flight
+    replanning, hovering through replans, the runtime shield. It defaults to
+    `CLASSIC`, the loop as first published; every entry point passes `FULL`.
+    `intent` overrides how the intent is read: a ready `MissionIntent`, or a
+    callable `(mission, world, *, home, landing, constraints) -> MissionIntent`.
+
     Returns the `MissionLog`; its `report` holds the flight, and unless
     `runs_dir` is None the run file and the JSONL log are written there.
     """
+    system = system or CLASSIC
     constraints = constraints or DEFAULT_CONSTRAINTS
     faults = fault_schedule or NO_FAULTS
     backend = backend or make_backend("custom", world=world)
     planner = planner or default_planner
     replanner = replanner or default_replanner
     verifier = verifier or verify
+    if system.gate != "preflight" and verifier is verify:
+        # Nothing is refused before it flies; what the checks would have said is still recorded.
+        verifier = recording
     perception = perception or SymbolicPerceptionSource(backend)
     runs_dir = RUNS_DIR if runs_dir is _UNSET else runs_dir
     when = datetime.now()
@@ -216,8 +238,10 @@ def run_mission(
         faults=faults.events,
         max_replan_attempts=max_replan_attempts,
         max_total_replans=max_total_replans,
+        system=system.record(),
     )
-    out.say(f'Mission: "{mission_text}"  (backend: {backend.name})')
+    out.say(f'Mission: "{mission_text}"  (backend: {backend.name}, system: {system.label})')
+    backend.shield = system.shield
 
     def settle(
         candidate: Plan,
@@ -229,16 +253,26 @@ def run_mission(
         start: tuple | None = None,
         home: tuple | None = None,
         start_label: str = "home",
+        goal=None,
+        relax: bool = False,
+        aircraft=None,
     ) -> tuple[Plan, bool, VerificationResult, int]:
-        """Verify, and ask for corrections until it passes or the attempts run out.
+        """Verify, repair, and ask for corrections until it passes or the attempts run out.
 
-        Returns the last plan seen, whether it passed, its verdict and its id.
+        `goal` is the intent the plan is also checked against. With `relax`
+        (in the air), a last candidate that is safe but falls short of the
+        intent is accepted, and what the mission gave up is logged.
+        `aircraft` replaces the verifier's aircraft model (in the air: the
+        monitor's energy figures). Returns the last plan seen, whether it
+        passed, its verdict and its id.
         """
         config = (
-            VERIFIER_DEFAULTS.model_copy(update={"home": home, "start_label": start_label})
-            if home else None
+            (aircraft or VERIFIER_DEFAULTS).model_copy(update={"home": home, "start_label": start_label})
+            if home else aircraft
         )
+        extra = {"intent": goal} if goal is not None else {}
         attempt = 0
+        repaired = False  # repair is tried once per plan the planner proposes
         while True:
             plan_id = next(ids)
             mlog.add(
@@ -253,7 +287,7 @@ def run_mission(
             )
             out.plan(candidate)
             out.phase("VERIFYING" if attempt == 0 else "RE-VERIFYING", f"plan {plan_id}")
-            result = verifier(candidate, against, config=config, world=world)
+            result = verifier(candidate, against, config=config, world=world, **extra)
             mlog.add(
                 "verification",
                 plan_id=plan_id,
@@ -266,15 +300,35 @@ def run_mission(
             if result.passed:
                 out.say("    passed")
                 return candidate, True, result, plan_id
+            if system.repair and system.gate == "preflight" and not repaired:
+                repaired = True
+                began = time.perf_counter()
+                fixed = repair(candidate, against, world=world, config=config or VERIFIER_DEFAULTS, intent=goal, result=result)
+                mlog.add(
+                    "repair", plan_id=plan_id, repaired=fixed.repaired, actions=fixed.actions,
+                    ms=round((time.perf_counter() - began) * 1000, 2), t=t,
+                )
+                if fixed.repaired:
+                    out.phase("REPAIRED", f"plan {plan_id}: " + "; ".join(fixed.actions[:4]) + (" ..." if len(fixed.actions) > 4 else ""))
+                    candidate, source = fixed.plan, "repair"
+                    continue
             if attempt >= max_replan_attempts:
+                if relax and goal is not None and relaxed(result).passed:
+                    given_up = [v.description for v in result.violations if v.type is ViolationType.INTENT and v.blocking]
+                    mlog.add("intent_relaxed", plan_id=plan_id, t=t, given_up=given_up)
+                    out.say(f"    safe, but short of the mission: {len(given_up)} requirement(s) given up")
+                    return candidate, True, relaxed(result), plan_id
                 out.say(f"    still failing after {max_replan_attempts} correction(s)")
                 return candidate, False, result, plan_id
             attempt += 1
+            repaired = False
             out.phase("REPLANNING", f"correction {attempt}/{max_replan_attempts} after the verifier's rejection")
             if source == "initial":
                 source = "verification_replan"
             try:
-                candidate = ask_again(candidate, result.messages())
+                phases = [s.name for s in candidate.subtasks for _ in s.waypoints]
+                reasons = result.by_subtask(phases) if system.subtask_feedback else result.messages()
+                candidate = ask_again(candidate, reasons)
             except PlannerError as exc:
                 out.say(f"    planner failed: {exc}")
                 return candidate, False, result, plan_id
@@ -283,9 +337,29 @@ def run_mission(
 
     # Only passed when chosen, so a planner that predates pads still works.
     pads = {k: v for k, v in (("home", home), ("landing", landing)) if v is not None}
+
+    goal = None
+    if system.intent or intent is not None:
+        goal = _read_intent(intent, mission_text, world, home, landing, constraints, mlog, out)
+        from waypoint.intent import assess  # noqa: PLC0415
+
+        reasons = assess(goal, constraints=constraints, world=world, home=home, landing=landing or home)
+        if reasons:
+            mlog.add("infeasible", reasons=reasons)
+            out.phase("MISSION INFEASIBLE", "; ".join(reasons))
+            refused = MissionReport(
+                mission_text, Plan(mission_text=mission_text), VerificationResult(passed=False), constraints,
+                faults=faults, world=world,
+            )
+            refused.backend = backend.describe()
+            refused.outcome = "infeasible"
+            _finish(mlog, refused, backend, runs_dir, when, out, reason="; ".join(reasons))
+            return mlog
+    asks = {**pads, **({"intent": goal} if goal is not None else {})}
+
     out.phase("PLANNING", f'"{mission_text}"')
     try:
-        plan = planner(mission_text, constraints, world=world, **pads)
+        plan = planner(mission_text, constraints, world=world, **asks)
     except PlannerError as exc:
         out.say(f"    planning failed: {exc}")
         mlog.add("mission_finished", outcome="planning_failed", reason=str(exc), backend=backend.name)
@@ -296,9 +370,10 @@ def run_mission(
         "initial",
         constraints,
         lambda previous, violations: replanner(
-            mission_text, previous, violations, constraints, world=world, **pads
+            mission_text, previous, violations, constraints, world=world, **asks
         ),
         home=home,
+        goal=goal,
     )
     if not passed:
         rejected = MissionReport(mission_text, plan, result, constraints, faults=faults, world=world)
@@ -322,6 +397,8 @@ def run_mission(
         out.say("    faults armed:")
         out.say(faults.describe())
 
+    if system.gate == "runtime":
+        plan = clamp_altitudes(plan, constraints)
     current, current_constraints = plan, constraints
     route_start = backend.state.reported_position
     feedback_config = feedback_config or FeedbackConfig()
@@ -334,11 +411,14 @@ def run_mission(
     last_battery_replan: float | None = None
     shown = 0  # backend events already printed
     interruptions = 0
+    battery_alarms = 0  # battery triggers so far: a drain that trips the monitor twice is not a blip
     outcome: str | None = None
     reason = ""
 
     def fly(route: Plan, *, watch: bool) -> ReplanTrigger | None:
         nonlocal start_battery, shown
+        guarded = system.gate == "runtime" and watch
+        fence = polygon_of(constraints.geofence, "geofence") if guarded else None
         for tick, state in enumerate(backend.run(route)):
             report.states.append(state)
             if start_battery is None:
@@ -348,6 +428,11 @@ def run_mission(
             for event in events[shown:]:
                 out.event(event)
             shown = len(events)
+            if guarded:
+                rejected = _guard(route, state, fence)
+                if rejected:
+                    history.append(_snapshot(state, route, current_constraints, known, route_start, ()))
+                    return rejected
             if not watch or tick % check_every:
                 continue
             seen = perception.get_events(state)
@@ -385,6 +470,7 @@ def run_mission(
             break
 
         interruptions += 1
+        battery_alarms += trigger.kind is TriggerKind.BATTERY_INSUFFICIENT
         state = backend.state
         mlog.add(
             "replan_triggered",
@@ -413,27 +499,78 @@ def run_mission(
             failsafe(reason)
             break
         in_air = constraints.model_copy(
-            update={"obstacles": list(known), "battery_budget_pct": min(100.0, budget)}
+            update={
+                "obstacles": list(known),
+                "battery_budget_pct": min(100.0, budget, state.battery_pct) if system.monitor_energy else min(100.0, budget),
+            }
+        )
+        aircraft = (
+            _monitor_aircraft(feedback_config, trigger, persistent=battery_alarms > 1) if system.monitor_energy else None
         )
         situation = summarize_for_llm(snapshot, trigger)
+        left = None
+        if goal is not None:
+            from waypoint.intent import remaining  # noqa: PLC0415
+
+            left = remaining(goal, flown_points(backend), world)
+        inflight_asks = {"intent": left} if left is not None else {}
 
         def ask(previous: Plan, violations: list[str]) -> Plan:
             return replanner(
                 mission_text, previous, violations, in_air,
-                world=world, home=here, landing=landing, situation=situation,
+                world=world, home=here, landing=landing, situation=situation, **inflight_asks,
             )
 
         out.phase("REPLANNING", f"from ({here[0]:.1f}, {here[1]:.1f}, {here[2]:.1f}) with {state.battery_pct:.1f}% battery")
-        try:
-            fresh = ask(current, [])
-        except PlannerError as exc:
-            outcome, reason = "aborted", f"the planner failed in flight: {exc}"
-            failsafe(reason)
-            break
-        fresh, passed, _, fresh_id = settle(
-            fresh, "inflight_replan", in_air, ask,
-            t=trigger.t, start=list(here), home=here, start_label="the current position",
-        )
+        fresh = None
+        if system.replan == "tiered" and system.gate == "preflight":
+            # Tier 1, no LLM: repair the rest of the route around what changed,
+            # or, short of battery, give up the phases that cost the most.
+            config_here = (aircraft or VERIFIER_DEFAULTS).model_copy(update={"home": here, "start_label": "the current position"})
+            rest = rest_of(current, state.target_index or 0)
+            began = time.perf_counter()
+            short = trigger.kind is TriggerKind.BATTERY_INSUFFICIENT
+            tier = None
+            if rest.subtasks:
+                tier = (
+                    trim_for_battery(rest, in_air, world=world, config=config_here, landing=landing)
+                    if short else
+                    repair(rest, in_air, world=world, config=config_here, intent=left)
+                )
+                mlog.add(
+                    "repair", tier="inflight", trigger=trigger.kind.value, repaired=tier.repaired,
+                    actions=tier.actions, ms=round((time.perf_counter() - began) * 1000, 2), t=trigger.t,
+                )
+            if tier is not None and tier.repaired:
+                out.phase("REPAIRED IN FLIGHT", "; ".join(tier.actions[:4]) + (" ..." if len(tier.actions) > 4 else ""))
+                given_up = [a for a in tier.actions if a.startswith(("dropped", "abandoned"))]
+                if given_up:
+                    mlog.add("intent_relaxed", t=trigger.t, given_up=given_up)
+                fresh, passed, _, fresh_id = settle(
+                    tier.plan, "inflight_repair", in_air, ask,
+                    t=trigger.t, start=list(here), home=here, start_label="the current position",
+                    goal=None if short else left, relax=True, aircraft=aircraft,
+                )
+        if fresh is None:
+            began = time.perf_counter()
+            try:
+                fresh = ask(current, [])
+            except PlannerError as exc:
+                outcome, reason = "aborted", f"the planner failed in flight: {exc}"
+                failsafe(reason)
+                break
+            fresh, passed, _, fresh_id = settle(
+                fresh, "inflight_replan", in_air, ask,
+                t=trigger.t, start=list(here), home=here, start_label="the current position",
+                goal=left, relax=True, aircraft=aircraft,
+            )
+            if system.hold == "hover":
+                waited = time.perf_counter() - began
+                for held in backend.hold(waited):
+                    report.states.append(held)
+                    out.tick(held)
+                if backend.crashed or backend.battery_depleted:
+                    break
         if not passed:
             outcome, reason = "aborted", "no replacement plan passed verification"
             failsafe(reason)
@@ -444,6 +581,8 @@ def run_mission(
         report.plans.append(
             _segment(fresh_id, "inflight_replan", fresh, t=trigger.t, start=here, why=trigger.reason)
         )
+        if system.gate == "runtime":
+            fresh = clamp_altitudes(fresh, in_air)
         mlog.add("execution_resumed", plan_id=fresh_id, t=trigger.t)
         out.phase("RESUMING", f"plan {fresh_id}")
         current, current_constraints, route_start = fresh, in_air, here
@@ -463,6 +602,13 @@ def run_mission(
     elif outcome is None:
         outcome = "completed" if report.completed else "incomplete"
     report.outcome = outcome
+    if goal is not None:
+        from waypoint.intent import evaluate  # noqa: PLC0415
+
+        track = [(s.x, s.y, s.z) for s in report.states]
+        last = report.plans[-1]["waypoints"][-1] if report.plans and report.plans[-1]["waypoints"] else None
+        planned = (last["x"], last["y"]) if last and last["action"] == "LAND" else None
+        report.intent = evaluate(goal, flown_points(backend), track, world, planned_landing=planned)
     _finish(mlog, report, backend, runs_dir, when, out, reason=reason)
     return mlog
 
@@ -495,6 +641,7 @@ def _finish(
         plans_flown=len(report.plans),
         verification_attempts=len(mlog.of("verification")),
         run_file=str(report.run_file) if report.run_file else None,
+        **({"intent": report.intent} if report.intent is not None else {}),
     )
     headline = {
         "completed": "MISSION COMPLETE",
@@ -502,6 +649,7 @@ def _finish(
         "crashed": "MISSION ENDED IN A CRASH",
         "battery_depleted": "BATTERY DEPLETED",
         "aborted": "MISSION ABORTED",
+        "infeasible": "MISSION REFUSED",
     }.get(report.outcome or "", "MISSION INCOMPLETE")
     landed = "landed after " if report.outcome == "completed" else ""
     out.phase(
@@ -513,6 +661,137 @@ def _finish(
         out.say(f"    run: {report.run_file}")
     if mlog.path:
         out.say(f"    log: {mlog.path}")
+
+
+def _read_intent(given, mission_text, world, home, landing, constraints, mlog, out):
+    """The mission's intent: as given, from a callable, or read by the LLM (by rules when there is none)."""
+    from waypoint.intent import MissionIntent, extract_intent, heuristic_intent  # noqa: PLC0415
+    from waypoint.planner.config import get_providers  # noqa: PLC0415
+
+    pad = landing or home
+    began = time.perf_counter()
+    source = "given"
+    try:
+        if isinstance(given, MissionIntent):
+            goal = given
+        elif callable(given):
+            source = "callable"
+            goal = given(mission_text, world, home=home, landing=pad, constraints=constraints)
+        elif get_providers():
+            source = "llm"
+            goal = extract_intent(mission_text, world, home=home, landing=pad, constraints=constraints)
+        else:
+            source = "rules"
+            goal = heuristic_intent(mission_text, world, landing=pad)
+    except Exception as exc:  # noqa: BLE001 -- the mission still flies on safety alone
+        mlog.add("intent_error", source=source, error=f"{type(exc).__name__}: {exc}")
+        out.say(f"    intent could not be read ({exc}); reading it by rules")
+        source = "rules"
+        goal = heuristic_intent(mission_text, world, landing=pad)
+    if goal.landing is None and pad is not None:
+        goal = goal.model_copy(update={"landing": tuple(pad)})
+    mlog.add(
+        "intent", source=source, ms=round((time.perf_counter() - began) * 1000, 1),
+        targets=[t.model_dump(mode="json") for t in goal.targets], ordered=goal.ordered,
+        avoid=[a.model_dump(mode="json") for a in goal.avoid], landing=goal.landing, notes=goal.notes,
+    )
+    out.phase("INTENT", f"read by {source}")
+    out.say(goal.describe())
+    return goal
+
+
+def recording(candidate: Plan, constraints, *, config=None, world=None, intent=None) -> VerificationResult:
+    """A gate that refuses nothing: every check runs and is recorded, and the plan flies anyway."""
+    found = verify(candidate, constraints, config=config, world=world, intent=intent)
+    return VerificationResult(passed=True, violations=found.violations)
+
+
+def clamp_altitudes(plan: Plan, constraints: MissionConstraints) -> Plan:
+    """The runtime guard's altitude rule: an out-of-band target is clamped into the band, not refused."""
+    clamped = plan.model_copy(deep=True)
+    for subtask in clamped.subtasks:
+        for wp in subtask.waypoints:
+            if wp.action is not Action.LAND:
+                wp.z = min(max(wp.z, constraints.min_altitude), constraints.max_altitude)
+    return clamped
+
+
+def _guard(route: Plan, state: UAVState, fence) -> ReplanTrigger | None:
+    """The runtime guard's fence rule: the command now being flown is refused if it leaves the geofence."""
+    from shapely.geometry import Point  # noqa: PLC0415
+
+    waypoints = route.waypoints()
+    index = state.target_index or 0
+    if index >= len(waypoints):
+        return None
+    wp = waypoints[index]
+    if fence.covers(Point(wp.x, wp.y)):
+        return None
+    return ReplanTrigger(
+        kind=TriggerKind.COMMAND_REJECTED,
+        t=state.timestamp,
+        reason=(
+            f"the command to fly to waypoint {index} at ({wp.x:g}, {wp.y:g}, {wp.z:g}) was refused: "
+            "it is outside the geofence"
+        ),
+        detail={"waypoint": index},
+    )
+
+
+def _monitor_aircraft(feedback: FeedbackConfig, trigger: ReplanTrigger, *, persistent: bool = False):
+    """The verifier's aircraft model, in the monitor's energy terms.
+
+    The monitor costs the rest of a route as metres plus avionics time at
+    cruise speed, scaled by the observed drain when the battery is failing,
+    and wants a reserve left at touchdown. A plan verified on the nominal
+    model could pass and then trip the monitor the moment it flew; verified on
+    this one, it cannot.
+    """
+    ratio = float(trigger.detail.get("drain_ratio") or 1.0)
+    if ratio <= feedback.battery_trend_tolerance:
+        ratio = 1.0
+    # A trend seen over ten seconds is trusted only so far: a cell fault that lasts
+    # a few seconds would otherwise be extrapolated over the whole route and the
+    # mission given up for nothing. A drain that persists trips the monitor again
+    # after its cooldown, with less battery left, and is planned for then.
+    if not persistent:
+        ratio = min(ratio, PLANNING_DRAIN_CAP)
+    per_metre = 1.0 / feedback.meters_per_battery_pct + 1.0 / (feedback.cruise_speed * feedback.seconds_per_battery_pct)
+    return VERIFIER_DEFAULTS.model_copy(update={
+        "meters_per_battery_pct": 1.0 / (per_metre * ratio),
+        "hover_seconds_per_battery_pct": VERIFIER_DEFAULTS.hover_seconds_per_battery_pct / ratio,
+        "reserve_battery_pct": feedback.battery_reserve_pct,
+    })
+
+
+def flown_points(backend: ExecutorBackend):
+    """The waypoints the aircraft has actually reached, in order, where it reached them."""
+    from waypoint.intent import RoutePoint  # noqa: PLC0415
+
+    points = []
+    for event in backend.event_records():
+        if event.get("type") != "WAYPOINT":
+            continue
+        payload = event.get("payload") or {}
+        action = payload.get("action")
+        if action is None:  # an older backend: the action is in the description
+            text = event.get("description", "")
+            action = next((a.value for a in Action if f"({a.value})" in text), "MOVE")
+        x, y, z = payload.get("position") or (0.0, 0.0, 0.0)
+        points.append(RoutePoint(len(points), "", x, y, z, Action(action)))
+    return points
+
+
+def rest_of(plan: Plan, index: int) -> Plan:
+    """The plan from waypoint `index` on, its phases kept."""
+    subtasks: list[SubTask] = []
+    position = 0
+    for subtask in plan.subtasks:
+        kept = [wp for k, wp in enumerate(subtask.waypoints, position) if k >= index]
+        position += len(subtask.waypoints)
+        if kept:
+            subtasks.append(SubTask(name=subtask.name, waypoints=kept))
+    return Plan(mission_text=plan.mission_text, subtasks=subtasks)
 
 
 def _snapshot(

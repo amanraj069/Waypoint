@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from waypoint.backends import make_backend  # noqa: E402
 from waypoint.gazebo.launch import GazeboError, play  # noqa: E402
 from waypoint.orchestrator import run_mission  # noqa: E402
+from waypoint.orchestrator.options import system_from  # noqa: E402
 from waypoint.orchestrator.runlog import read_run  # noqa: E402
 from waypoint.paths import RUNS_DIR, WORLDS_DIR  # noqa: E402
 from waypoint.planner import Plan  # noqa: E402
@@ -135,6 +136,7 @@ class Session:
             max_replan_attempts=self.args.max_attempts,
             max_total_replans=self.args.max_replans,
             runs_dir=self.args.runs_dir,
+            system=system_from(self.args.system),
         )
         report = log.report
         if self.args.no_watch or not (report and report.run_file and report.states):
@@ -215,6 +217,8 @@ def main(argv: list[str]) -> int:
                         help="In-flight replans allowed before landing where it is.")
     parser.add_argument("--max-altitude", type=float)
     parser.add_argument("--runs-dir", type=Path, default=RUNS_DIR)
+    parser.add_argument("--system", default="full",
+                        help="full (default), classic, or a preset with switches, e.g. full,no-shield.")
     parser.add_argument("--speed", type=float, default=1.0, help="Gazebo playback speed.")
     parser.add_argument("--no-watch", action="store_true",
                         help="Write the run file but do not open Gazebo on it.")

@@ -98,6 +98,8 @@ class TriggerKind(str, Enum):
     OBSTACLE_ON_ROUTE = "OBSTACLE_ON_ROUTE"
     BATTERY_INSUFFICIENT = "BATTERY_INSUFFICIENT"
     OFF_ROUTE = "OFF_ROUTE"
+    #: Only under the runtime-only gate: the guard refused the next command (a waypoint outside the geofence).
+    COMMAND_REJECTED = "COMMAND_REJECTED"
 
 
 @dataclass(frozen=True)

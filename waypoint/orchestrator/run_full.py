@@ -23,6 +23,7 @@ from pathlib import Path
 
 from waypoint.backends import BACKENDS, BackendError, make_backend
 from waypoint.orchestrator.loop import run_mission
+from waypoint.orchestrator.options import system_from
 from waypoint.paths import RUNS_DIR
 from waypoint.planner import DEFAULT_CONSTRAINTS, Plan
 from waypoint.scenario import fence_around, load_faults, load_plan, load_world, parse_wind
@@ -58,6 +59,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--check-every", type=int, default=1, help="Ticks between feedback checks (10 ticks = 1 s)."
     )
+    parser.add_argument(
+        "--system", default="full",
+        help="Which capabilities fly it: full (default), classic, runtime-guard, no-gate, or a preset with "
+             "switches, e.g. full,no-shield or full,replan=llm (see waypoint/orchestrator/options.py).",
+    )
     parser.add_argument("--runs-dir", type=Path, help=f"Where to write the run (default {RUNS_DIR}).")
     parser.add_argument("--quiet", action="store_true", help="Print nothing but errors.")
     parser.add_argument("--gazebo", action="store_true", help="Watch the flight in Gazebo afterwards.")
@@ -66,6 +72,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.WARNING, format="  [%(levelname)s] %(message)s")
+    try:
+        system = system_from(args.system)
+    except ValueError as exc:
+        print(f"--system: {exc}", file=sys.stderr)
+        return 2
 
     world = load_world(args.world)
     constraints = DEFAULT_CONSTRAINTS
@@ -98,6 +109,7 @@ def main(argv: list[str] | None = None) -> int:
             max_replan_attempts=args.max_attempts,
             max_total_replans=args.max_replans,
             check_every=args.check_every,
+            system=system,
             verbose=not args.quiet,
             **({"runs_dir": args.runs_dir} if args.runs_dir else {}),
         )

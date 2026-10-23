@@ -38,6 +38,7 @@ from waypoint.planner import (
 )
 from waypoint.sim import Executor, FaultSchedule, SimConfig, Wind
 from waypoint.verifier import DEFAULT_CONFIG, verify
+from waypoint.verifier.repair import repair
 from waypoint.world.landing import Site, find as find_site, survey as survey_site
 from waypoint.world.models import World
 
@@ -245,6 +246,19 @@ def violation_records(result) -> list[dict]:
     ]
 
 
+def read_intent(text, world, home, landing, constraints):
+    """The mission's requirements: read by the LLM when one is configured, else by rules."""
+    from waypoint.intent import extract_intent, heuristic_intent  # noqa: PLC0415
+    from waypoint.planner.config import get_providers  # noqa: PLC0415
+
+    if get_providers():
+        try:
+            return extract_intent(text, world, home=home, landing=landing, constraints=constraints)
+        except Exception:  # noqa: BLE001 -- the mission still flies on safety alone
+            pass
+    return heuristic_intent(text, world, landing=landing)
+
+
 def run_mission(mission: Mission) -> None:
     """Plan it, check it, fly it, write it. Every step reports as it happens."""
     request = mission.request
@@ -286,6 +300,22 @@ def run_mission(mission: Mission) -> None:
     # One launch point, shared by all three stages.
     verifier_config = DEFAULT_CONFIG.model_copy(update={"home": home})
 
+    # -- what the mission asks for ------------------------------------------
+    goal = None
+    if not request.plan_id and request.mission.strip():
+        goal = read_intent(request.mission, world, home, landing.position, constraints)
+        mission.emit(
+            "intent", goal.describe(),
+            targets=[t.model_dump(mode="json") for t in goal.targets], ordered=goal.ordered,
+            avoid=[a.model_dump(mode="json") for a in goal.avoid], notes=goal.notes,
+        )
+        from waypoint.intent import assess  # noqa: PLC0415
+
+        reasons = assess(goal, constraints=constraints, world=world, home=home, landing=landing.position)
+        if reasons:
+            raise MissionError("the mission cannot be flown as asked: " + "; ".join(reasons))
+    asks = {"intent": goal} if goal is not None else {}
+
     # -- plan ---------------------------------------------------------------
     if request.plan_id:
         path = plan_path(request.plan_id)
@@ -300,7 +330,7 @@ def run_mission(mission: Mission) -> None:
         try:
             plan = make_plan(
                 request.mission, constraints, world=world, home=home,
-                landing=landing.position if request.landing else None,
+                landing=landing.position if request.landing else None, **asks,
             )
         except PlannerError as exc:
             raise MissionError(f"planning failed: {exc}") from exc
@@ -308,7 +338,7 @@ def run_mission(mission: Mission) -> None:
 
     # -- verify, and let the planner correct itself -------------------------
     mission.set_status("verifying", "checking the plan against the envelope and the world")
-    result = verify(plan, constraints, config=verifier_config, world=world)
+    result = verify(plan, constraints, config=verifier_config, world=world, intent=goal)
     mission.emit(
         "verification",
         "passed" if result.passed else "rejected",
@@ -320,6 +350,15 @@ def run_mission(mission: Mission) -> None:
     for attempt in range(1, request.retries + 1):
         if result.passed or mission.cancelled:
             break
+        # Geometry first: what can be fixed without asking the planner again is fixed.
+        fixed = repair(plan, constraints, world=world, config=verifier_config, intent=goal, result=result)
+        mission.emit("repair", "; ".join(fixed.actions) or "nothing it could fix", repaired=fixed.repaired,
+                     actions=fixed.actions)
+        if fixed.repaired:
+            plan, result = fixed.plan, fixed.result
+            mission.emit("plan", f"{len(plan.subtasks)} phase(s), repaired", phases=plan_summary(plan), attempt=attempt)
+            mission.emit("verification", "passed", passed=True, violations=violation_records(result), attempt=attempt)
+            break
         mission.set_status(
             "replanning",
             f"handing the violations back to the planner ({attempt}/{request.retries})",
@@ -327,14 +366,15 @@ def run_mission(mission: Mission) -> None:
         )
         try:
             plan = make_replan(
-                request.mission, plan, result.messages(), constraints, world=world, home=home,
-                landing=landing.position if request.landing else None,
+                request.mission, plan, result.by_subtask([s.name for s in plan.subtasks for _ in s.waypoints]),
+                constraints, world=world, home=home,
+                landing=landing.position if request.landing else None, **asks,
             )
         except PlannerError as exc:
             mission.emit("note", f"the planner could not correct it: {exc}")
             break
         mission.emit("plan", f"{len(plan.subtasks)} phase(s)", phases=plan_summary(plan), attempt=attempt)
-        result = verify(plan, constraints, config=verifier_config, world=world)
+        result = verify(plan, constraints, config=verifier_config, world=world, intent=goal)
         mission.emit(
             "verification",
             "passed" if result.passed else "still rejected",
@@ -362,7 +402,7 @@ def run_mission(mission: Mission) -> None:
     )
 
     executor = Executor(
-        plan, constraints=constraints, config=config, wind=wind, faults=faults, world=world
+        plan, constraints=constraints, config=config, wind=wind, faults=faults, world=world, shield=True,
     )
     report = MissionReport(
         mission_text=request.mission or plan.mission_text or request.label(),
