@@ -16,6 +16,17 @@ README defines, per condition:
   flight had already used up its replans).
 * **replan latency**: wall-clock seconds from the trigger to a verified new
   plan, overall and by the fault that caused the trigger.
+* **intent success**: scored against the batch file's hand-written ground
+  truth (`experiments.truth`), never against the system's own reading: the
+  share of flights that did everything the mission asked (every target served
+  from enough sides, in order, avoid zones untouched, landed on the pad), and
+  the mean fraction done. Missions marked infeasible are scored on refusal
+  instead: refusing one is right, flying it is not.
+* **intent extraction**: where the system read an intent, how it compares with
+  the ground truth (exact match, and target-set F1).
+* **repair, shield, hover**: how often deterministic repair fixed a rejected
+  plan on the ground and in the air (and how fast), how often the safety
+  shield had to step in, and the flight time spent hovering through replans.
 * **safety vs optimality**: for missions where the verifier changed the plan
   (it rejected the first one and a corrected plan flew instead) and both the
   verified run and the unconstrained baseline completed, how much longer
@@ -36,7 +47,8 @@ from datetime import datetime
 from pathlib import Path
 
 from waypoint.experiments.runner import MANIFEST
-from waypoint.experiments.spec import CONDITION_LABELS
+from waypoint.experiments.spec import CONDITION_LABELS, SYSTEM_LABELS, split_label
+from waypoint.experiments.truth import Truth, extraction_match, load_truth, score
 
 BLOCKING = frozenset({"ERROR", "CRITICAL"})
 
@@ -45,6 +57,7 @@ CAUSES = {
     "OBSTACLE_ON_ROUTE": ("OBSTACLE_APPEARS",),
     "BATTERY_INSUFFICIENT": ("BATTERY_DRAIN_SPIKE",),
     "OFF_ROUTE": ("GPS_DRIFT", "WIND_GUST"),
+    "COMMAND_REJECTED": (),
 }
 #: A trigger no injected fault explains (the battery model alone, or a perception source).
 NO_FAULT = "NONE"
@@ -91,6 +104,26 @@ class MissionRow:
     tokens_out: int = 0
     tokens_reasoning: int = 0
     models: str = ""
+    #: The system part of the condition, and whether its first plan was asked for with the intent.
+    system: str = ""
+    #: Against the ground truth, when the batch file has one for this mission.
+    expected_feasible: bool | None = None
+    refused: bool = False
+    intent_score: float | None = None
+    accomplished: bool | None = None
+    touchdown_error_m: float | None = None
+    baseline_intent_score: float | None = None
+    baseline_accomplished: bool | None = None
+    extraction_exact: bool | None = None
+    extraction_f1: float | None = None
+    repairs_ground: int = 0
+    repairs_ground_ok: int = 0
+    repairs_inflight: int = 0
+    repairs_inflight_ok: int = 0
+    repair_ms: float | None = None
+    intent_relaxed: int = 0
+    shield_events: int = 0
+    hold_s: float = 0.0
 
     @property
     def completed(self) -> bool:
@@ -110,6 +143,8 @@ class ReplanRow:
     passed: bool
     latency_s: float | None
     resolution: str
+    #: "repair" when deterministic repair resolved it without the planner, else "llm".
+    tier: str = "llm"
 
     @property
     def bucket(self) -> str:
@@ -123,21 +158,26 @@ class ReplanRow:
 # ---------------------------------------------------------------------------
 
 
-def load(result_dir: Path) -> tuple[list[MissionRow], list[ReplanRow], dict]:
+def load(result_dir: Path, missions: Path | None = None) -> tuple[list[MissionRow], list[ReplanRow], dict]:
+    """Rows from a result directory. `missions` is the batch file holding the ground truth
+    (default: the one the manifest names), so older batches can be scored against it too."""
     result_dir = Path(result_dir)
     manifest = json.loads((result_dir / MANIFEST).read_text())
+    truths = load_truth(missions or manifest.get("config", {}).get("missions_file"))
     rows: list[MissionRow] = []
     replans: list[ReplanRow] = []
     for flight in manifest["flights"]:
-        row, triggers = analyse_flight(flight, result_dir)
+        row, triggers = analyse_flight(flight, result_dir, truths)
         rows.append(row)
         replans.extend(triggers)
     return rows, replans, manifest
 
 
-def analyse_flight(flight: dict, base: Path) -> tuple[MissionRow, list[ReplanRow]]:
+def analyse_flight(flight: dict, base: Path, truths: dict[str, Truth] | None = None) -> tuple[MissionRow, list[ReplanRow]]:
+    truth = (truths or {}).get(flight["mission_id"])
     row = MissionRow(
         condition=flight["condition"],
+        system=split_label(flight["condition"])[1],
         mission_id=flight["mission_id"],
         repeat=flight.get("repeat", 0),
         world=flight.get("world") or "open",
@@ -154,8 +194,9 @@ def analyse_flight(flight: dict, base: Path) -> tuple[MissionRow, list[ReplanRow
     run = _read_run(base, verified.get("run"))
     row.wall_s = verified.get("wall_s")
     row.outcome = _finished(entries).get("outcome", "")
-    row.planner_calls = sum(1 for e in entries if e["kind"] == "plan_proposed")
+    row.planner_calls = sum(1 for e in entries if e["kind"] == "plan_proposed" and e.get("source") not in ("repair", "inflight_repair"))
     _fill_flight(row, entries, run)
+    _fill_system(row, entries, run, truth)
 
     ground = _ground_phase(entries)
     verifications = [e for e in ground if e["kind"] == "verification"]
@@ -179,6 +220,10 @@ def analyse_flight(flight: dict, base: Path) -> tuple[MissionRow, list[ReplanRow
         b_run = _read_run(base, baseline.get("run"))
         finished = _finished(b_entries)
         row.baseline_outcome = finished.get("outcome", "")
+        if truth is not None and truth.feasible is not False and b_run:
+            graded = score(truth, b_run)
+            row.baseline_intent_score = graded["score"]
+            row.baseline_accomplished = graded["accomplished"] and row.baseline_outcome == "completed"
         row.baseline_distance_m = finished.get("distance_m")
         row.baseline_duration_s = finished.get("t")
         row.baseline_crashed = row.baseline_outcome == "crashed" or bool((b_run.get("sim") or {}).get("crashed"))
@@ -219,6 +264,35 @@ def _fill_flight(row: MissionRow, entries: list[dict], run: dict) -> None:
     row.separation_breaches = _count_events(run, "SEPARATION")
 
 
+def _fill_system(row: MissionRow, entries: list[dict], run: dict, truth: Truth | None) -> None:
+    """Intent against the ground truth, and what repair, the shield and hovering did."""
+    row.refused = row.outcome == "infeasible"
+    if truth is not None:
+        row.expected_feasible = truth.feasible
+        if truth.feasible is not False:
+            if row.refused or not run:
+                row.intent_score, row.accomplished = 0.0, False
+            else:
+                graded = score(truth, run)
+                row.intent_score = graded["score"]
+                row.accomplished = graded["accomplished"] and row.completed
+                row.touchdown_error_m = graded.get("touchdown_error_m")
+        read = next((e for e in entries if e["kind"] == "intent"), None)
+        if read is not None:
+            match = extraction_match(truth.intent, read)
+            row.extraction_exact, row.extraction_f1 = match["exact"], match["target_f1"]
+    repairs = [e for e in entries if e["kind"] == "repair"]
+    ground = [e for e in repairs if e.get("tier") != "inflight"]
+    flight = [e for e in repairs if e.get("tier") == "inflight"]
+    row.repairs_ground, row.repairs_ground_ok = len(ground), sum(bool(e.get("repaired")) for e in ground)
+    row.repairs_inflight, row.repairs_inflight_ok = len(flight), sum(bool(e.get("repaired")) for e in flight)
+    row.repair_ms = _median([e.get("ms") for e in repairs])
+    row.intent_relaxed = sum(1 for e in entries if e["kind"] == "intent_relaxed")
+    events = run.get("events") or []
+    row.shield_events = sum(1 for e in events if e.get("type") == "SHIELD")
+    row.hold_s = round(sum((e.get("payload") or {}).get("seconds", 0.0) for e in events if e.get("type") == "HOLD"), 2)
+
+
 def _ground_phase(entries: list[dict]) -> list[dict]:
     for index, entry in enumerate(entries):
         if entry["kind"] == "execution_started":
@@ -246,6 +320,9 @@ def _replans(row: MissionRow, entries: list[dict], run: dict) -> list[ReplanRow]
             segment.append(entry)
         checks = [e for e in segment if e["kind"] == "verification"]
         passed = next((e for e in checks if e["passed"]), None)
+        tier = "repair" if any(
+            e["kind"] == "repair" and e.get("tier") == "inflight" and e.get("repaired") for e in segment
+        ) else "llm"
         latency = _seconds(trigger["wall"], passed["wall"]) if passed else None
         out.append(ReplanRow(
             condition=row.condition,
@@ -259,6 +336,7 @@ def _replans(row: MissionRow, entries: list[dict], run: dict) -> list[ReplanRow]
             passed=passed is not None and resolution == "resumed",
             latency_s=latency,
             resolution=resolution,
+            tier=tier,
         ))
     return out
 
@@ -305,10 +383,17 @@ def _read_run(base: Path, relative: str | None) -> dict:
 
 
 def ordered_conditions(labels) -> list[str]:
-    """Conditions in their fixed order, unknown labels after, so colours never move."""
-    labels = set(labels)
-    known = [label for label in CONDITION_LABELS if label in labels]
-    return known + sorted(labels - set(known))
+    """Conditions in their fixed order (system, then planner), unknown labels after, so colours never move."""
+
+    def key(label: str):
+        planner, system = split_label(label)
+        return (
+            SYSTEM_LABELS.index(system) if system in SYSTEM_LABELS else len(SYSTEM_LABELS),
+            CONDITION_LABELS.index(planner) if planner in CONDITION_LABELS else len(CONDITION_LABELS),
+            label,
+        )
+
+    return sorted(set(labels), key=key)
 
 
 def first_prompt(condition: str) -> str:
@@ -317,8 +402,15 @@ def first_prompt(condition: str) -> str:
     Violation feedback only changes what the planner hears after a rejection,
     so hierarchical+feedback and hierarchical+no-feedback ask for their first
     plan with the same prompt, and any gap in their catch rates is sampling.
+    The intent's requirements are part of that prompt, so systems that read the
+    intent are pooled apart from those that do not.
     """
-    return condition.split("+", 1)[0]
+    planner, system = split_label(condition)
+    from waypoint.experiments.spec import system_of  # noqa: PLC0415
+
+    options = system_of(condition)
+    reads_intent = options.intent if options is not None else False
+    return planner.split("+", 1)[0] + ("+intent" if reads_intent else "")
 
 
 def aggregate(rows: list[MissionRow], replans: list[ReplanRow]) -> dict:
@@ -361,6 +453,16 @@ def _summarise(rows: list[MissionRow], triggers: list[ReplanRow]) -> dict:
             by_fault[t.fault_type].append(t.latency_s)
     pairs = [r for r in rows if r.distance_overhead_pct is not None]
     baselines = [r for r in rows if r.baseline_outcome]
+    scored = [r for r in rows if r.expected_feasible is not False and r.accomplished is not None]
+    impossible = [r for r in rows if r.expected_feasible is False and not r.error]
+    possible = [r for r in rows if r.expected_feasible is True and not r.error]
+    read = [r for r in rows if r.extraction_exact is not None]
+    base_scored = [r for r in rows if r.baseline_accomplished is not None]
+    by_tier: dict[str, list[float]] = defaultdict(list)
+    for t in triggers:
+        if t.latency_s is not None:
+            by_tier[t.tier].append(t.latency_s)
+    flown_rows = [r for r in rows if r.distance_m is not None]
     return {
         "flights": len(rows),
         "errors": sum(bool(r.error) for r in rows),
@@ -405,6 +507,42 @@ def _summarise(rows: list[MissionRow], triggers: list[ReplanRow]) -> dict:
             "tokens_out_per_flight": _mean([r.tokens_out for r in rows]),
             "models": dict(Counter(m for r in rows for m in r.models.split(";") if m).most_common()),
         },
+        "intent": {
+            "scored": len(scored),
+            "accomplished_rate": _rate(sum(bool(r.accomplished) for r in scored), len(scored)),
+            "accomplished_ci95": wilson(sum(bool(r.accomplished) for r in scored), len(scored)),
+            "mean_score": _mean([r.intent_score for r in scored]),
+            "infeasible_missions": len(impossible),
+            "correct_refusal_rate": _rate(sum(r.refused for r in impossible), len(impossible)),
+            "false_refusal_rate": _rate(sum(r.refused for r in possible), len(possible)),
+            "relaxed_flights": sum(r.intent_relaxed > 0 for r in rows),
+            "median_touchdown_error_m": _median([r.touchdown_error_m for r in scored if r.completed]),
+            "baseline_accomplished_rate": _rate(sum(bool(r.baseline_accomplished) for r in base_scored), len(base_scored)),
+            "baseline_mean_score": _mean([r.baseline_intent_score for r in base_scored]),
+        },
+        "extraction": {
+            "read": len(read),
+            "exact_rate": _rate(sum(bool(r.extraction_exact) for r in read), len(read)),
+            "mean_target_f1": _mean([r.extraction_f1 for r in read]),
+        },
+        "repair": {
+            "ground_tried": sum(r.repairs_ground for r in rows),
+            "ground_fixed": sum(r.repairs_ground_ok for r in rows),
+            "ground_fix_rate": _rate(sum(r.repairs_ground_ok for r in rows), sum(r.repairs_ground for r in rows)),
+            "inflight_tried": sum(r.repairs_inflight for r in rows),
+            "inflight_fixed": sum(r.repairs_inflight_ok for r in rows),
+            "inflight_fix_rate": _rate(sum(r.repairs_inflight_ok for r in rows), sum(r.repairs_inflight for r in rows)),
+            "median_ms": _median([r.repair_ms for r in rows]),
+        },
+        "replan_tiers": {
+            tier: {"n": len(values), "median_latency_s": _median(values), "mean_latency_s": _mean(values)}
+            for tier, values in sorted(by_tier.items())
+        },
+        "shield": {
+            "flights_with_interventions": _rate(sum(r.shield_events > 0 for r in flown_rows), len(flown_rows)),
+            "mean_events": _mean([r.shield_events for r in flown_rows]),
+        },
+        "hover_hold_s": {"total": round(sum(r.hold_s for r in rows), 2), "mean": _mean([r.hold_s for r in flown_rows])},
         "tradeoff": {
             "pairs": len(pairs),
             "median_distance_overhead_pct": _median([r.distance_overhead_pct for r in pairs]),

@@ -8,6 +8,10 @@
     python -m waypoint.experiments run --no-violation-feedback
     python -m waypoint.experiments run --all-conditions
 
+    # the system against its comparisons: as published, and runtime-only enforcement
+    python -m waypoint.experiments run --systems "full;classic;runtime-guard"
+    python -m waypoint.experiments run --systems "full;full,no-repair;full,no-shield;full,no-intent"
+
     # recompute the metrics and plots from saved runs, or compare several
     python -m waypoint.experiments report experiments/runs/<stamp>
     python -m waypoint.experiments report experiments/runs/<a> experiments/runs/<b>
@@ -24,7 +28,8 @@ from waypoint.backends import BACKENDS, BackendError, make_backend
 from waypoint.experiments.metrics import load
 from waypoint.experiments.report import write_report
 from waypoint.experiments.runner import EXPERIMENTS_DIR, RESULTS_DIR, BatchConfig, run_batch
-from waypoint.experiments.spec import CONDITIONS, condition_from_label
+from waypoint.experiments.spec import CONDITIONS, Condition, condition_from_label
+from waypoint.orchestrator.options import system_from
 from waypoint.planner import PlannerOptions
 from waypoint.planner.config import API_KEY_VAR, OPENAI_KEY_VAR, get_cost, get_providers, get_reasoning_effort
 
@@ -55,6 +60,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Comma-separated condition labels to fly, e.g. "
              "hierarchical+feedback,hierarchical+no-feedback (the feedback ablation alone).",
     )
+    run.add_argument(
+        "--system", default="full",
+        help="The loop's capabilities: full (default), classic, runtime-guard, no-gate, or a preset with "
+             "switches such as full,no-repair.",
+    )
+    run.add_argument(
+        "--systems",
+        help='Several systems, separated by ";", each flown under every planner condition, e.g. "full;classic;runtime-guard".',
+    )
     run.add_argument("--seed", type=int, default=0, help="Seeds the randomized fault schedules.")
     run.add_argument("--repeats", type=int, default=1, help="Fly each mission this many times per condition.")
     run.add_argument("--no-baseline", action="store_true", help="Skip the unconstrained comparison flights.")
@@ -74,6 +88,11 @@ def main(argv: list[str] | None = None) -> int:
     report = commands.add_parser("report", help="Metrics, CSVs and plots from one or more result directories.")
     report.add_argument("results", type=Path, nargs="+")
     report.add_argument("--out", type=Path, help="Where to write (default: the result directory, or a new one).")
+    report.add_argument(
+        "--missions", type=Path,
+        help="The batch file with the ground truth to score against (default: the one each manifest names). "
+             "Lets batches flown before ground truth existed be scored on it.",
+    )
     report.add_argument("--no-plots", action="store_true")
 
     args = parser.parse_args(argv)
@@ -90,11 +109,14 @@ def _run(args) -> int:
     if sum(map(bool, (args.all_conditions, args.conditions, args.flat or args.no_violation_feedback))) > 1:
         raise ValueError("choose one of --all-conditions, --conditions, or --flat/--no-violation-feedback")
     if args.all_conditions:
-        conditions = list(CONDITIONS)
+        planners = list(CONDITIONS)
     elif args.conditions:
-        conditions = [condition_from_label(c.strip()) for c in args.conditions.split(",") if c.strip()]
+        planners = [condition_from_label(c.strip()) for c in args.conditions.split(",") if c.strip()]
     else:
-        conditions = [PlannerOptions(hierarchical=not args.flat, violation_feedback=not args.no_violation_feedback)]
+        planners = [PlannerOptions(hierarchical=not args.flat, violation_feedback=not args.no_violation_feedback)]
+    specs = [s.strip() for s in (args.systems or args.system).split(";") if s.strip()]
+    systems = [system_from(spec) for spec in specs]
+    conditions = [Condition(planner, system) for system in systems for planner in planners]
     make_backend(args.backend)  # an unbuilt backend fails here, not twenty times over
     get_cost(), get_reasoning_effort()  # a mistyped COST or OPENAI_REASONING_EFFORT fails here too
     if not get_providers():
@@ -129,7 +151,7 @@ def _run(args) -> int:
 def _report(args) -> int:
     rows, replans = [], []
     for directory in args.results:
-        more_rows, more_replans, _ = load(directory)
+        more_rows, more_replans, _ = load(directory, args.missions)
         rows += more_rows
         replans += more_replans
     if args.out:

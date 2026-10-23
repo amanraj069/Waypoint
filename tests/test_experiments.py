@@ -107,12 +107,28 @@ def flown(batch_file, tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_the_bundled_batch_has_twenty_missions_that_all_set_up():
+def test_the_bundled_batch_has_thirty_six_missions_that_all_set_up():
     batch = Batch.load(DEFAULT_MISSIONS)
-    assert len(batch.missions) == 20
+    assert len(batch.missions) == 36
     for spec in batch.missions:
         scenario = prepare(spec)  # every world loads and every pad resolves
         assert scenario.constraints.geofence
+
+
+def test_every_mission_has_ground_truth_that_grounds_and_agrees_with_the_assessment():
+    """Every landmark the truth names exists, and the truth's feasibility is what assess() finds."""
+    from waypoint.intent import assess, ground
+
+    batch = Batch.load(DEFAULT_MISSIONS)
+    for spec in batch.missions:
+        assert spec.expect is not None, spec.id
+        scenario = prepare(spec)
+        intent = ground(spec.expect.payload(), scenario.world, landing=scenario.landing)
+        assert not [n for n in intent.notes if "not a landmark" in n], spec.id
+        reasons = assess(intent, constraints=scenario.constraints, world=scenario.world,
+                         home=scenario.home, landing=scenario.landing)
+        if spec.expect.feasible is not None:
+            assert (not reasons) == spec.expect.feasible, (spec.id, reasons)
 
 
 def test_a_named_pad_moves_the_start_and_the_landing():
@@ -449,10 +465,20 @@ def test_conditions_can_be_picked_by_label(monkeypatch, capsys):
     with pytest.raises(Stop):
         main(["run", "--conditions", "hierarchical+feedback,hierarchical+no-feedback", "--no-baseline-replans"])
     config = captured["c"]
-    assert [c.label for c in config.conditions] == ["hierarchical+feedback", "hierarchical+no-feedback"]
+    assert [c.label for c in config.conditions] == ["hierarchical+feedback|full", "hierarchical+no-feedback|full"]
     assert config.baseline_replans is False
     assert main(["run", "--conditions", "nonsense"]) == 2
     assert main(["run", "--conditions", "flat+feedback", "--all-conditions"]) == 2
+
+    with pytest.raises(Stop):
+        main(["run", "--systems", "full;classic;runtime-guard;full,no-repair"])
+    assert [c.label for c in captured["c"].conditions] == [
+        "hierarchical+feedback|full",
+        "hierarchical+feedback|classic",
+        "hierarchical+feedback|runtime-guard",
+        "hierarchical+feedback|gate=preflight,intent,no-repair,replan=tiered,hold=hover,shield",
+    ]
+    assert main(["run", "--system", "warp-drive"]) == 2
 
 
 def test_a_mistyped_cost_stops_the_batch_before_it_starts(monkeypatch, capsys):

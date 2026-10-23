@@ -1,55 +1,229 @@
 {
-  "description": "Twenty missions across open space and the four bundled places. Each mixes a fault schedule (named or randomized) and some ask for things the envelope makes hard, so the verifier has something to catch.",
+  "description": "Thirty-six missions across open space and the four bundled places. Each mixes a fault schedule (named or randomized); some ask for things the envelope makes hard, and six cannot be flown as asked at all. `expect` is the hand-written ground truth every flight is scored on; no planner ever sees it.",
   "missions": [
     {
       "id": "open_north_field",
       "mission": "survey the north field: photograph the four corners of a 60 m square field 80 m north of base, then come home and land",
-      "faults": "crane_ahead"
+      "faults": "crane_ahead",
+      "expect": {
+        "targets": [
+          {
+            "label": "south-west corner",
+            "x": -30,
+            "y": 50,
+            "action": "CAPTURE"
+          },
+          {
+            "label": "south-east corner",
+            "x": 30,
+            "y": 50,
+            "action": "CAPTURE"
+          },
+          {
+            "label": "north-east corner",
+            "x": 30,
+            "y": 110,
+            "action": "CAPTURE"
+          },
+          {
+            "label": "north-west corner",
+            "x": -30,
+            "y": 110,
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "open_tower_inspection",
       "mission": "inspect the comms tower 120 m east of base: photograph it from the north, east and south at 30 m, then return and land",
-      "faults": "random"
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "label": "comms tower",
+            "x": 120,
+            "y": 0,
+            "action": "CAPTURE",
+            "sides": [
+              "north",
+              "east",
+              "south"
+            ],
+            "views": 3,
+            "altitude_agl": 30
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "open_perimeter",
       "mission": "fly a lap of the whole geofence perimeter about 10 m inside the fence at 40 m, photographing each corner, then land at base",
-      "faults": "storm"
+      "faults": "storm",
+      "expect": {
+        "targets": [
+          {
+            "label": "south-west corner",
+            "x": -90,
+            "y": -90,
+            "action": "CAPTURE",
+            "altitude_agl": 40
+          },
+          {
+            "label": "south-east corner",
+            "x": 190,
+            "y": -90,
+            "action": "CAPTURE",
+            "altitude_agl": 40
+          },
+          {
+            "label": "north-east corner",
+            "x": 190,
+            "y": 190,
+            "action": "CAPTURE",
+            "altitude_agl": 40
+          },
+          {
+            "label": "north-west corner",
+            "x": -90,
+            "y": 190,
+            "action": "CAPTURE",
+            "altitude_agl": 40
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "open_far_point",
       "mission": "fly to the point 1500 m north of base, photograph it, and come back",
-      "faults": "none"
+      "faults": "none",
+      "expect": {
+        "targets": [
+          {
+            "label": "the far point",
+            "x": 0,
+            "y": 1500,
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": false
+      }
     },
     {
       "id": "open_high_overwatch",
       "mission": "climb to 200 m above base and hover for a panoramic photo, then land",
-      "faults": "random"
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "label": "above base",
+            "x": 0,
+            "y": 0,
+            "action": "CAPTURE",
+            "altitude_agl": 200
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": false
+      }
     },
     {
       "id": "lodhi_bara_gumbad",
       "mission": "photograph Bara Gumbad from two sides, then come home",
       "world": "lodhi",
-      "faults": "crane_ahead"
+      "faults": "crane_ahead",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Bara Gumbad",
+            "action": "CAPTURE",
+            "views": 2
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "lodhi_tomb_tour",
       "mission": "take a round of the garden: photograph Bara Gumbad, Sheesh Gumbad and Sikander Lodi's Tomb, then fly low over the lake and land at the start",
       "world": "lodhi",
-      "faults": "random"
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Bara Gumbad",
+            "action": "CAPTURE"
+          },
+          {
+            "landmark": "Sheesh Gumbad",
+            "action": "CAPTURE"
+          },
+          {
+            "landmark": "Sikander Lodi's Tomb",
+            "action": "CAPTURE"
+          },
+          {
+            "landmark": "the lake",
+            "action": "OVERFLY",
+            "max_altitude_agl": 30
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "lodhi_safdarjung",
       "mission": "photograph Safdarjung's Tomb from 30 m up, directly over the dome",
       "world": "lodhi",
-      "faults": "none"
+      "faults": "none",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Safdarjung's Tomb",
+            "action": "CAPTURE",
+            "overhead": true,
+            "altitude_agl": 30
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "lodhi_grove_crossing",
       "mission": "fly straight through the old grove at 8 m to photograph the trees from inside, then return",
       "world": "lodhi",
       "start": "the Lodhi Road gate",
-      "faults": "gps_slip"
+      "faults": "gps_slip",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "the old grove",
+            "action": "CAPTURE",
+            "altitude_agl": 8
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": null
+      }
     },
     {
       "id": "lodhi_glass_house_drop",
@@ -57,39 +231,137 @@
       "world": "lodhi",
       "start": "the Bonsai Park",
       "land": "the east lawn",
-      "faults": "random"
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "the Glass House",
+            "action": "CAPTURE"
+          },
+          {
+            "landmark": "the rose garden",
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "delhi_india_gate",
       "mission": "orbit India Gate once at 60 m, photographing it from four sides, then land back at the lawns",
       "world": "delhi",
-      "faults": "crane_ahead"
+      "faults": "crane_ahead",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "India Gate",
+            "action": "CAPTURE",
+            "views": 4,
+            "altitude_agl": 60
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "delhi_vista_run",
       "mission": "fly the length of Kartavya Path from India Gate to Rashtrapati Bhavan, photograph the North and South Blocks on the way, and come back",
       "world": "delhi",
-      "faults": "storm"
+      "faults": "storm",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Kartavya Path",
+            "action": "OVERFLY"
+          },
+          {
+            "landmark": "Rashtrapati Bhavan",
+            "action": "OVERFLY"
+          },
+          {
+            "landmark": "the North Block",
+            "action": "CAPTURE"
+          },
+          {
+            "landmark": "the South Block",
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "delhi_museum_to_stadium",
       "mission": "photograph the National Museum, then the National Stadium, and land at the stadium",
       "world": "delhi",
       "land": "the National Stadium",
-      "faults": "random"
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "the National Museum",
+            "action": "CAPTURE"
+          },
+          {
+            "landmark": "the National Stadium",
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": true,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "chowk_street_run",
       "mission": "fly down Chandni Chowk below the rooftops to the Red Fort, photograph the Lahori Gate, then come back",
       "world": "chowk",
       "faults": "gps_slip",
-      "wind": "3,0,0"
+      "wind": "3,0,0",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Chandni Chowk",
+            "action": "OVERFLY",
+            "max_altitude_agl": 19
+          },
+          {
+            "landmark": "the Lahori Gate",
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": true,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "chowk_jama_masjid",
       "mission": "photograph the Jama Masjid from above its minarets, then the Sunehri Masjid, and return",
       "world": "chowk",
-      "faults": "random"
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "the Jama Masjid",
+            "action": "CAPTURE",
+            "overhead": true
+          },
+          {
+            "landmark": "the Sunehri Masjid",
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": true,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "chowk_station_delivery",
@@ -97,20 +369,64 @@
       "world": "chowk",
       "start": "Fatehpuri Masjid",
       "land": "the Old Delhi railway station",
-      "faults": "crane_ahead"
+      "faults": "crane_ahead",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Khari Baoli",
+            "action": "OVERFLY"
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "munnar_tea_museum",
       "mission": "photograph the Tata Tea Museum from above, then fly over Munnar town and land at the start",
       "world": "munnar",
-      "faults": "random"
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "the Tata Tea Museum",
+            "action": "CAPTURE",
+            "overhead": true
+          },
+          {
+            "landmark": "Munnar town",
+            "action": "OVERFLY"
+          }
+        ],
+        "ordered": true,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "munnar_dam_inspection",
       "mission": "inspect the Mattupetty dam: photograph its face from three points along it, then make a low pass over Mattupetty Lake and come home",
       "world": "munnar",
       "faults": "storm",
-      "wind": "0,4,0"
+      "wind": "0,4,0",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "the Mattupetty dam",
+            "action": "CAPTURE",
+            "views": 3
+          },
+          {
+            "landmark": "Mattupetty Lake",
+            "action": "OVERFLY",
+            "max_altitude_agl": 30
+          }
+        ],
+        "ordered": true,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "munnar_echo_point",
@@ -118,13 +434,394 @@
       "world": "munnar",
       "start": "the Kanan Devan tea estate",
       "land": "Echo Point",
-      "faults": "random"
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Chokramudi",
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
     },
     {
       "id": "munnar_anamudi",
       "mission": "fly to the summit of Anamudi, photograph the view, and return",
       "world": "munnar",
-      "faults": "gps_slip"
+      "faults": "gps_slip",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Anamudi",
+            "action": "CAPTURE",
+            "overhead": true
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
+    },
+    {
+      "id": "open_ordered_points",
+      "mission": "first photograph the point 100 m east of base, then the point 100 m north of base, then land",
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "label": "100 m east",
+            "x": 100,
+            "y": 0,
+            "action": "CAPTURE"
+          },
+          {
+            "label": "100 m north",
+            "x": 0,
+            "y": 100,
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": true,
+        "avoid": [],
+        "feasible": true
+      }
+    },
+    {
+      "id": "open_avoid_point",
+      "mission": "photograph the point 150 m north of base, but never fly over the pump house 75 m north of base, then come home",
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "label": "150 m north",
+            "x": 0,
+            "y": 150,
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": false,
+        "avoid": [
+          {
+            "label": "pump house",
+            "x": 0,
+            "y": 75,
+            "radius": 10
+          }
+        ],
+        "feasible": true
+      }
+    },
+    {
+      "id": "open_overhead_base",
+      "mission": "climb to 100 m above base, photograph straight down, then land",
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "label": "base",
+            "x": 0,
+            "y": 0,
+            "action": "CAPTURE",
+            "overhead": true,
+            "altitude_agl": 100
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
+    },
+    {
+      "id": "lodhi_sheesh_sides",
+      "mission": "photograph Sheesh Gumbad from its north and west sides, then come home",
+      "world": "lodhi",
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Sheesh Gumbad",
+            "action": "CAPTURE",
+            "sides": [
+              "north",
+              "west"
+            ],
+            "views": 2
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
+    },
+    {
+      "id": "lodhi_athpula_no_lake",
+      "mission": "photograph Athpula, but never fly over the lake, and come home",
+      "world": "lodhi",
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Athpula",
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": false,
+        "avoid": [
+          {
+            "landmark": "the lake"
+          }
+        ],
+        "feasible": true
+      }
+    },
+    {
+      "id": "lodhi_three_in_order",
+      "mission": "first photograph the Glass House, then Bara Gumbad, then Mohammed Shah's Tomb, and land at the start",
+      "world": "lodhi",
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "the Glass House",
+            "action": "CAPTURE"
+          },
+          {
+            "landmark": "Bara Gumbad",
+            "action": "CAPTURE"
+          },
+          {
+            "landmark": "Mohammed Shah's Tomb",
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": true,
+        "avoid": [],
+        "feasible": true
+      }
+    },
+    {
+      "id": "delhi_sansad_east",
+      "mission": "photograph Sansad Bhavan from the north and Rashtrapati Bhavan from the east, then return to the lawns",
+      "world": "delhi",
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Sansad Bhavan",
+            "action": "CAPTURE",
+            "sides": [
+              "north"
+            ]
+          },
+          {
+            "landmark": "Rashtrapati Bhavan",
+            "action": "CAPTURE",
+            "sides": [
+              "east"
+            ]
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
+    },
+    {
+      "id": "delhi_canals_low",
+      "mission": "make a low pass over the north canal, then over the south canal, and land back at the lawns",
+      "world": "delhi",
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "the north canal",
+            "action": "OVERFLY",
+            "max_altitude_agl": 30
+          },
+          {
+            "landmark": "the south canal",
+            "action": "OVERFLY",
+            "max_altitude_agl": 30
+          }
+        ],
+        "ordered": true,
+        "avoid": [],
+        "feasible": true
+      }
+    },
+    {
+      "id": "delhi_gate_too_high",
+      "mission": "photograph India Gate from 150 m above its top",
+      "world": "delhi",
+      "faults": "none",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "India Gate",
+            "action": "CAPTURE",
+            "overhead": true,
+            "altitude_agl": 192
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": false
+      }
+    },
+    {
+      "id": "chowk_gurudwara_town_hall",
+      "mission": "photograph Gurudwara Sis Ganj Sahib from two sides and the Town Hall from above, then come back",
+      "world": "chowk",
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Gurudwara Sis Ganj Sahib",
+            "action": "CAPTURE",
+            "views": 2
+          },
+          {
+            "landmark": "the Town Hall",
+            "action": "CAPTURE",
+            "overhead": true
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": true
+      }
+    },
+    {
+      "id": "chowk_masjid_no_fort",
+      "mission": "photograph the Jama Masjid, but never fly over the Red Fort, then return",
+      "world": "chowk",
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "the Jama Masjid",
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": false,
+        "avoid": [
+          {
+            "landmark": "the Red Fort"
+          }
+        ],
+        "feasible": true
+      }
+    },
+    {
+      "id": "chowk_dariba_low",
+      "mission": "fly along Dariba Kalan below the rooftops, then photograph the Sunehri Masjid, and return",
+      "world": "chowk",
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Dariba Kalan",
+            "action": "OVERFLY",
+            "max_altitude_agl": 17
+          },
+          {
+            "landmark": "the Sunehri Masjid",
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": true,
+        "avoid": [],
+        "feasible": true
+      }
+    },
+    {
+      "id": "munnar_meesapulimala_west",
+      "mission": "photograph Meesapulimala from the west, then land at Top Station",
+      "world": "munnar",
+      "land": "Top Station",
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Meesapulimala",
+            "action": "CAPTURE",
+            "sides": [
+              "west"
+            ]
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": null
+      }
+    },
+    {
+      "id": "munnar_shola_no_lake",
+      "mission": "photograph the shola forest and the Eravikulam park gate without ever flying over Mattupetty Lake, and come home",
+      "world": "munnar",
+      "faults": "random",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "the shola forest",
+            "action": "CAPTURE"
+          },
+          {
+            "landmark": "the Eravikulam park gate",
+            "action": "CAPTURE"
+          }
+        ],
+        "ordered": false,
+        "avoid": [
+          {
+            "landmark": "Mattupetty Lake"
+          }
+        ],
+        "feasible": true
+      }
+    },
+    {
+      "id": "munnar_anamudi_too_high",
+      "mission": "photograph Anamudi from 300 m above its summit",
+      "world": "munnar",
+      "faults": "none",
+      "expect": {
+        "targets": [
+          {
+            "landmark": "Anamudi",
+            "action": "CAPTURE",
+            "overhead": true,
+            "altitude_agl": 300
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": false
+      }
+    },
+    {
+      "id": "open_impossible_tower",
+      "mission": "photograph the mast 600 m west of base from its west side",
+      "faults": "none",
+      "expect": {
+        "targets": [
+          {
+            "label": "mast",
+            "x": -600,
+            "y": 0,
+            "action": "CAPTURE",
+            "sides": [
+              "west"
+            ]
+          }
+        ],
+        "ordered": false,
+        "avoid": [],
+        "feasible": false
+      }
     }
   ]
 }
