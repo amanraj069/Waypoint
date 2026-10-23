@@ -522,14 +522,14 @@ def test_the_custom_simulator_never_loads_px4():
     assert out.strip() == "False"
 
 
-def test_camera_perception_is_a_stub_for_now():
+def test_camera_perception_without_frames_says_how_to_start_it():
     from waypoint.feedback import GazeboCameraPerceptionSource, PerceptionSource
     from waypoint.sim.state import UAVState
 
     source = GazeboCameraPerceptionSource()
     assert isinstance(source, PerceptionSource) and source.name == "gazebo_camera"
     assert source.depth_topic == "/depth_camera" and source.rgb_topic.endswith("/IMX214/image")
-    with pytest.raises(NotImplementedError, match="SymbolicPerceptionSource"):
+    with pytest.raises(RuntimeError, match="for_px4"):
         source.get_events(UAVState(x=0.0, y=0.0, z=10.0))
 
 
