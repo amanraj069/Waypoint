@@ -1,0 +1,4 @@
+# What compare/ needs beyond Waypoint's own dependencies (pyproject.toml).
+#   uv pip install -r compare/requirements.txt       # or: .venv/bin/pip install -r compare/requirements.txt
+scipy>=1.11          # AutoTAMP: the HiGHS mixed-integer solver, through scipy.optimize.milp
+mcp>=1.9,<2          # DroneServer: the official MCP Python SDK, the 1.x line with FastMCP that upstream uses
