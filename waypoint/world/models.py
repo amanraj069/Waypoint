@@ -22,6 +22,7 @@ from shapely import STRtree
 from shapely.geometry import Point, Polygon
 
 from waypoint.planner.models import GeoPoint
+from waypoint.planner.sanitize import clean_name, clean_text
 
 
 class Terrain(BaseModel):
@@ -131,7 +132,7 @@ class Building(BaseModel):
 
     def label(self) -> str:
         cx, cy = self.centre
-        return f"'{self.name or 'building'}' at ({cx:.0f}, {cy:.0f}), {self.height:g} m tall"
+        return f"'{clean_name(self.name, 'building')}' at ({cx:.0f}, {cy:.0f}), {self.height:g} m tall"
 
 
 class Landmark(BaseModel):
@@ -151,12 +152,12 @@ class Landmark(BaseModel):
     note: str = Field(default="", description="Anything else the planner should know.")
 
     def describe(self) -> str:
-        parts = [f"'{self.name}' ({self.kind}) at ({self.x:.0f}, {self.y:.0f})",
+        parts = [f"'{clean_name(self.name)}' ({clean_name(self.kind, 'feature')}) at ({self.x:.0f}, {self.y:.0f})",
                  f"about {self.radius * 2:.0f} m across"]
         if self.height:
             parts.append(f"{self.height:.0f} m tall")
         if self.note:
-            parts.append(self.note)
+            parts.append(clean_text(self.note, "note"))
         return ", ".join(parts)
 
 
@@ -271,9 +272,9 @@ class World(BaseModel):
     def describe(self) -> str:
         """Prompt-ready summary: enough for a planner to fly it safely."""
         if not self.buildings and not self.terrain and not self.landmarks:
-            return f"- Environment '{self.name}': open, flat ground at elevation 0."
+            return f"- Environment '{clean_name(self.name, 'the area')}': open, flat ground at elevation 0."
 
-        lines = [f"- Environment '{self.name}':"]
+        lines = [f"- Environment '{clean_name(self.name, 'the area')}':"]
         if self.terrain:
             low, high = self.terrain.relief
             lines.append(
@@ -292,7 +293,7 @@ class World(BaseModel):
             for building in listed:
                 cx, cy = building.centre
                 lines.append(
-                    f"    - {building.name or 'building'}: centre ({cx:.0f}, {cy:.0f}), "
+                    f"    - {clean_name(building.name, 'building')}: centre ({cx:.0f}, {cy:.0f}), "
                     f"roof at {building.roof:.0f} m"
                 )
             if len(self.buildings) > len(listed):

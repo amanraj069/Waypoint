@@ -371,7 +371,10 @@ def test_the_cli_runs_the_whole_loop(monkeypatch, capsys, tmp_path):
     faults = tmp_path / "crane.json"
     faults.write_text(crane_ahead().model_dump_json())
 
-    code = main(["--mission", "survey the north field", "--faults", str(faults), "--runs-dir", str(tmp_path)])
+    code = main([
+        "--mission", "survey the north field", "--faults", str(faults), "--runs-dir", str(tmp_path),
+        "--system", "classic",
+    ])
     out = capsys.readouterr().out
 
     assert code == 0
@@ -379,6 +382,29 @@ def test_the_cli_runs_the_whole_loop(monkeypatch, capsys, tmp_path):
     assert phases[:6] == ["PLANNING", "VERIFYING", "REPLANNING", "RE-VERIFYING", "EXECUTING", "REPLAN"]
     assert "RESUMING" in phases and phases[-1] == "MISSION"
     assert list(tmp_path.glob("*.log.jsonl")) and list(tmp_path.glob("*[0-9].json"))
+
+
+def test_the_cli_flies_the_full_system_by_default(monkeypatch, capsys, tmp_path):
+    """Intent first; the plan over the ceiling repaired (brought down to it), not re-asked.
+
+    At the 120 m ceiling the route passes over the 60 m crane, so nothing
+    needs replanning in the air either: the planner is asked exactly once.
+    """
+    script = Script()
+    monkeypatch.setattr("waypoint.orchestrator.loop.default_planner", script.planner)
+    monkeypatch.setattr("waypoint.orchestrator.loop.default_replanner", script.replanner)
+    faults = tmp_path / "crane.json"
+    faults.write_text(crane_ahead().model_dump_json())
+
+    code = main(["--mission", "survey the north field", "--faults", str(faults), "--runs-dir", str(tmp_path)])
+    out = capsys.readouterr().out
+
+    assert code == 0
+    phases = [line.split("==> ")[1].split("  ")[0] for line in out.splitlines() if line.startswith("==> ")]
+    assert phases[0] == "INTENT"
+    assert "REPAIRED" in phases and "REPLANNING" not in phases
+    assert [c["kind"] for c in script.calls] == ["plan"]
+    assert phases[-1] == "MISSION COMPLETE"
 
 
 def test_a_chosen_start_and_landing_are_flown_and_recorded(tmp_path):

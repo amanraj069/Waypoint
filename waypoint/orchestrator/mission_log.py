@@ -7,9 +7,14 @@ produces them:
 
 | kind                | when |
 | ------------------- | ---- |
-| `mission_started`   | first: the mission, the backend, the constraints, the faults |
-| `plan_proposed`     | every plan the planner returns: `source` is `initial`, `verification_replan` or `inflight_replan` |
+| `mission_started`   | first: the mission, the backend, the constraints, the faults, the `system` it flies with |
+| `intent`            | the mission read as requirements: `source` (llm, rules, given), `targets`, `ordered`, `avoid`, `landing`, `notes` |
+| `intent_error`      | reading the intent failed (`error`); the rules read it instead |
+| `infeasible`        | the mission cannot be flown as asked (`reasons`); nothing is planned |
+| `plan_proposed`     | every plan considered: `source` is `initial`, `verification_replan`, `repair`, `inflight_replan` or `inflight_repair` |
 | `verification`      | every verifier verdict, pass or fail, with its violations |
+| `repair`            | deterministic repair tried a rejected plan (or, with `tier: inflight`, the rest of the route): `repaired`, `actions`, `ms` |
+| `intent_relaxed`    | in the air, the mission gave up requirements to stay safe: `given_up` |
 | `execution_started` | the first verified plan starts flying |
 | `perception`        | the perception source reported an obstacle not known before: `type`, `position`, `severity`, `description`, `obstacle` |
 | `replan_triggered`  | the feedback monitor stopped the flight: `trigger` (what), `reason`, `t`, `position` |
@@ -30,8 +35,13 @@ from typing import Any
 
 KINDS = (
     "mission_started",
+    "intent",
+    "intent_error",
+    "infeasible",
     "plan_proposed",
     "verification",
+    "repair",
+    "intent_relaxed",
     "execution_started",
     "perception",
     "replan_triggered",

@@ -1,0 +1,306 @@
+{
+ "speed_share": 0.8,
+ "vmax": 5.0,
+ "cases": {
+  "1a": {
+   "start": [
+    1.305,
+    -1.305
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "optimal",
+   "solve_seconds": 5.164,
+   "duration": 0.907,
+   "limit": 1.1337,
+   "passes_checker": true
+  },
+  "1b": {
+   "start": [
+    -1.0,
+    -0.35
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "optimal",
+   "solve_seconds": 1.641,
+   "duration": 0.779,
+   "limit": 0.9737,
+   "passes_checker": true
+  },
+  "2a": {
+   "start": [
+    1.305,
+    -1.305
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "limit",
+   "solve_seconds": 120.097,
+   "duration": 2.119,
+   "limit": 2.6487,
+   "passes_checker": true
+  },
+  "2b": {
+   "start": [
+    -1.0,
+    -0.35
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "limit",
+   "solve_seconds": 120.094,
+   "duration": 1.727,
+   "limit": 2.1587,
+   "passes_checker": true
+  },
+  "3a": {
+   "start": [
+    1.305,
+    -1.305
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "optimal",
+   "solve_seconds": 4.021,
+   "duration": 0.907,
+   "limit": 1.1337,
+   "passes_checker": true
+  },
+  "3b": {
+   "start": [
+    -1.0,
+    -0.35
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "optimal",
+   "solve_seconds": 2.427,
+   "duration": 0.779,
+   "limit": 0.9737,
+   "passes_checker": true
+  },
+  "4a": {
+   "start": [
+    1.305,
+    -1.305
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "limit",
+   "solve_seconds": 120.192,
+   "duration": 6.509,
+   "limit": 8.1363,
+   "passes_checker": true
+  },
+  "4b": {
+   "start": [
+    -1.0,
+    -0.35
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "limit",
+   "solve_seconds": 600.209,
+   "duration": 6.077,
+   "limit": 7.5963,
+   "passes_checker": true
+  },
+  "5a": {
+   "start": [
+    1.305,
+    -1.305
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "optimal",
+   "solve_seconds": 0.303,
+   "duration": 1.231,
+   "limit": 1.5387,
+   "passes_checker": true
+  },
+  "5b": {
+   "start": [
+    -1.0,
+    -0.35
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "optimal",
+   "solve_seconds": 0.355,
+   "duration": 1.039,
+   "limit": 1.2987,
+   "passes_checker": true
+  },
+  "6a": {
+   "start": [
+    1.305,
+    -1.305
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "optimal",
+   "solve_seconds": 2.686,
+   "duration": 1.231,
+   "limit": 1.5387,
+   "passes_checker": true
+  },
+  "6b": {
+   "start": [
+    -1.0,
+    -0.35
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "optimal",
+   "solve_seconds": 35.679,
+   "duration": 1.167,
+   "limit": 1.4587,
+   "passes_checker": true
+  },
+  "7a": {
+   "start": [
+    1.305,
+    -1.305
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "limit",
+   "solve_seconds": 120.008,
+   "duration": 1.601,
+   "limit": 2.0012,
+   "passes_checker": true
+  },
+  "7b": {
+   "start": [
+    -1.0,
+    -0.35
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "optimal",
+   "solve_seconds": 110.456,
+   "duration": 1.085,
+   "limit": 1.3562,
+   "passes_checker": true
+  },
+  "8a": {
+   "start": [
+    1.305,
+    -1.305
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "limit",
+   "solve_seconds": 607.04,
+   "duration": null,
+   "limit": null,
+   "passes_checker": false
+  },
+  "8b": {
+   "start": [
+    -1.0,
+    -0.35
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "limit",
+   "solve_seconds": 618.541,
+   "duration": null,
+   "limit": null,
+   "passes_checker": false
+  },
+  "9a": {
+   "start": [
+    -1.35,
+    -1.1
+   ],
+   "end": [
+    1.15,
+    1.15
+   ],
+   "status": "limit",
+   "solve_seconds": 120.007,
+   "duration": 1.406,
+   "limit": 1.7575,
+   "passes_checker": true
+  },
+  "9b": {
+   "start": [
+    -1.35,
+    -1.1
+   ],
+   "end": [
+    1.15,
+    1.15
+   ],
+   "status": "limit",
+   "solve_seconds": 120.006,
+   "duration": 1.406,
+   "limit": 1.7575,
+   "passes_checker": true
+  },
+  "10a": {
+   "start": [
+    1.305,
+    -1.305
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "limit",
+   "solve_seconds": 600.053,
+   "duration": null,
+   "limit": null,
+   "passes_checker": false
+  },
+  "10b": {
+   "start": [
+    -1.0,
+    -0.35
+   ],
+   "end": [
+    0.0,
+    1.305
+   ],
+   "status": "limit",
+   "solve_seconds": 600.052,
+   "duration": 1.791,
+   "limit": 2.2387,
+   "passes_checker": true
+  }
+ }
+}

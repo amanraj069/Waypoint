@@ -1,0 +1,170 @@
+{
+ "system": "waypoint",
+ "mission_id": "delhi_vista_run",
+ "mission": "fly the length of Kartavya Path from India Gate to Rashtrapati Bhavan, photograph the North and South Blocks on the way, and come back",
+ "world": "delhi",
+ "faults_spec": "storm",
+ "seed": 0,
+ "error": null,
+ "faults": [
+  {
+   "type": "WIND_GUST",
+   "trigger": {
+    "time": 12.0,
+    "battery_below": null,
+    "at_waypoint": null,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 9.0,
+   "direction": 90.0,
+   "vertical": 0.0,
+   "duration": 6.0,
+   "obstacle": null,
+   "ahead": null,
+   "name": "squall"
+  },
+  {
+   "type": "BATTERY_DRAIN_SPIKE",
+   "trigger": {
+    "time": null,
+    "battery_below": 97.0,
+    "at_waypoint": null,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 0.8,
+   "direction": 0.0,
+   "vertical": 0.0,
+   "duration": 15.0,
+   "obstacle": null,
+   "ahead": null,
+   "name": "cell fault"
+  },
+  {
+   "type": "OBSTACLE_APPEARS",
+   "trigger": {
+    "time": null,
+    "battery_below": null,
+    "at_waypoint": 3,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 1.0,
+   "direction": 0.0,
+   "vertical": 0.0,
+   "duration": null,
+   "obstacle": {
+    "x": 48.0,
+    "y": 60.0,
+    "radius": 12.0,
+    "height": 40.0,
+    "name": "mobile crane"
+   },
+   "ahead": null,
+   "name": "crane spotted"
+  },
+  {
+   "type": "GPS_DRIFT",
+   "trigger": {
+    "time": null,
+    "battery_below": null,
+    "at_waypoint": 5,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 0.6,
+   "direction": 200.0,
+   "vertical": 0.0,
+   "duration": 18.0,
+   "obstacle": null,
+   "ahead": null,
+   "name": "gps slip"
+  }
+ ],
+ "usage": {
+  "openai:gpt-5-nano": {
+   "calls": 3,
+   "input": 7114,
+   "cached": 3584,
+   "output": 6892,
+   "reasoning": 6208
+  }
+ },
+ "detail": {
+  "outcome": "completed",
+  "inflight_replans": 1,
+  "log_events": {
+   "execution_resumed": 1,
+   "execution_started": 1,
+   "intent": 1,
+   "intent_relaxed": 1,
+   "mission_finished": 1,
+   "mission_started": 1,
+   "plan_proposed": 3,
+   "repair": 2,
+   "replan_triggered": 1,
+   "verification": 3
+  },
+  "wall_s": 38.7
+ },
+ "grade": {
+  "flew": true,
+  "landed": true,
+  "crashed": false,
+  "battery_depleted": false,
+  "keep_out_breaches": 0,
+  "left_geofence": false,
+  "seconds_outside_geofence": 0.0,
+  "above_ceiling": false,
+  "max_altitude_m": 89.8,
+  "distance_m": 279.5,
+  "flight_s": 101.7,
+  "battery_left_pct": 79.3,
+  "expected_feasible": true,
+  "accomplished": false,
+  "refused": null,
+  "share_done": 0.0,
+  "targets": [
+   {
+    "name": "Kartavya Path",
+    "action": "OVERFLY",
+    "required_views": 1,
+    "views": 0,
+    "missing_sides": [],
+    "served": false,
+    "score": 0.0
+   },
+   {
+    "name": "Rashtrapati Bhavan",
+    "action": "OVERFLY",
+    "required_views": 1,
+    "views": 0,
+    "missing_sides": [],
+    "served": false,
+    "score": 0.0
+   },
+   {
+    "name": "the North Block",
+    "action": "CAPTURE",
+    "required_views": 1,
+    "views": 0,
+    "missing_sides": [],
+    "served": false,
+    "score": 0.0
+   },
+   {
+    "name": "the South Block",
+    "action": "CAPTURE",
+    "required_views": 1,
+    "views": 0,
+    "missing_sides": [],
+    "served": false,
+    "score": 0.0
+   }
+  ],
+  "why_not": "4 of 4 target(s) not served: Kartavya Path, Rashtrapati Bhavan, the North Block",
+  "touchdown_error_m": 0.01
+ },
+ "outcome": "completed"
+}

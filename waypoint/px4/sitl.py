@@ -214,6 +214,8 @@ class Sitl:
         verifier's and the monitor's job, not a wall's.
         """
         run: dict = {"world": self.world.model_dump(mode="json"), "pads": {"start": list(self.pad)}}
+        if self.model in ("x500_depth", "x500_mono_cam"):
+            run["beacons"] = False  # the camera would see the pad's beam of light as a mast
         if self.constraints is not None:
             run["constraints"] = self.constraints.model_dump(mode="json")
             run["obstacles"] = [{**o.model_dump(mode="json"), "appeared_at": 0.0} for o in self.constraints.obstacles]

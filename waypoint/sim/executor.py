@@ -28,10 +28,13 @@ from waypoint.planner.models import Action, MissionConstraints, Obstacle, Plan, 
 from waypoint.sim.config import DEFAULT_CONFIG, NO_WIND, SimConfig, Vector, Wind
 from waypoint.sim.dynamics import add, desired_velocity, distance, heading_of, step
 from waypoint.sim.faults import FaultEvent, FaultSchedule, FaultType, NO_FAULTS
+from waypoint.sim.shield import DisturbanceObserver, GpsDriftObserver, SafetyShield
 from waypoint.sim.state import UAVState
 from waypoint.world.models import World
 
 LANDING_SPEED = 1.5
+#: How fast position hold may steer back to its point when the wind pushes it off.
+HOLD_SPEED = 2.0
 
 
 @dataclass
@@ -154,6 +157,7 @@ class Executor:
         faults: FaultSchedule | None = None,
         start: UAVState | None = None,
         world: World | None = None,
+        shield: bool = False,
     ):
         self.plan = plan
         self.constraints = constraints
@@ -161,6 +165,15 @@ class Executor:
         self.wind = wind or NO_WIND
         self.faults = faults or NO_FAULTS
         self.world = world
+        #: The runtime safety filter under the controller, when it is on (`sim.shield`).
+        self.shield = (
+            SafetyShield(constraints, world, lambda: [live.obstacle for live in self.obstacles]) if shield else None
+        )
+        self.shield_ticks = 0
+        self._shielding: tuple[str, ...] = ()
+        self._observer = DisturbanceObserver()
+        self._gps = GpsDriftObserver()
+        self._gps_flagged = False
 
         self.state = start or initial_state(self.config.start_battery_pct, self.config)
         if world is not None and start is None:
@@ -216,6 +229,25 @@ class Executor:
         self._landing = False
         yield from self._fly_plan()
 
+    def hold(self, seconds: float) -> Iterator[UAVState]:
+        """Hover where it is for `seconds`, as it does while the planner is thinking.
+
+        Position hold, not a frozen clock: the wind still blows, faults still
+        fire and the battery still drains, so a slow replan costs what it
+        would cost a real aircraft. Nothing happens on the ground.
+        """
+        if self.state.z <= self.state.ground + 0.5 or seconds <= 0:
+            return
+        target = self.state.reported_position
+        ticks = round(seconds / self.config.dt)
+        if ticks <= 0:
+            return
+        self._record("HOLD", f"hovering {seconds:.1f}s while the planner replans", {"seconds": round(seconds, 2)})
+        for _ in range(ticks):
+            yield self._tick(target, HOLD_SPEED)
+            if self._out_of_battery or self._crashed:
+                return
+
     def _fly_plan(self) -> Iterator[UAVState]:
         for index, (subtask, waypoint) in enumerate(self._flat_plan()):
             if self._out_of_battery or self._crashed:
@@ -269,6 +301,7 @@ class Executor:
             f"({self.state.x:.1f}, {self.state.y:.1f}, {self.state.z:.1f})",
             {
                 "waypoint_index": index,
+                "action": waypoint.action.value,
                 "position": [round(c, 2) for c in self.state.position],
                 "gps_error": round(self.state.gps_error, 2),
             },
@@ -342,6 +375,8 @@ class Executor:
             if hold
             else desired_velocity(self.state.reported_position, target, cruise, config)
         )
+        if self.shield is not None:
+            desired = self._shielded(desired)
         position, velocity = step(
             self.state.position, self.state.velocity_vector, desired, wind, config
         )
@@ -373,6 +408,36 @@ class Executor:
         self._check_separation()
         self._check_impact()
         return self.state
+
+    def _shielded(self, desired: Vector) -> Vector:
+        """The controller's velocity through the safety filter; a SHIELD event when what it avoids changes."""
+        disturbance = self._observer.update(self.state.velocity_vector)
+        where = self._gps.update(self.state.reported_position, self.state.velocity_vector, self.config.dt)
+        if self._gps.error > 3.0 and not self._gps_flagged:
+            self._gps_flagged = True
+            self._record(
+                "GPS_INTEGRITY",
+                f"GPS disagrees with the airframe's own motion: the fix has drifted about {self._gps.error:.1f} m; "
+                "the safety filter guards the corrected position",
+                {"error": round(self._gps.error, 2)},
+            )
+        filtered, hazards = self.shield.filter(
+            where, desired, velocity=self.state.velocity_vector,
+            disturbance=disturbance, landing=self._landing,
+        )
+        self._observer.commanded(filtered)
+        hazards = tuple(sorted(set(hazards)))
+        if hazards:
+            self.shield_ticks += 1
+            if hazards != self._shielding:
+                change = distance(filtered, desired)
+                self._record(
+                    "SHIELD",
+                    f"safety filter steering clear of {', '.join(hazards)} (changed the command by {change:.1f} m/s)",
+                    {"hazards": list(hazards), "change": round(change, 2)},
+                )
+        self._shielding = hazards
+        return filtered
 
     def _drain(self, travelled: float, t: float) -> float:
         config = self.config

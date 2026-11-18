@@ -1,0 +1,56 @@
+{
+ "started": "2026-11-16T22:39:03",
+ "systems": [
+  "droneserver"
+ ],
+ "missions": [
+  "open_north_field",
+  "open_tower_inspection",
+  "open_perimeter",
+  "open_far_point",
+  "open_high_overwatch",
+  "lodhi_bara_gumbad",
+  "lodhi_tomb_tour",
+  "lodhi_safdarjung",
+  "lodhi_grove_crossing",
+  "lodhi_glass_house_drop",
+  "delhi_india_gate",
+  "delhi_vista_run",
+  "delhi_museum_to_stadium",
+  "chowk_street_run",
+  "chowk_jama_masjid",
+  "chowk_station_delivery",
+  "munnar_tea_museum",
+  "munnar_dam_inspection",
+  "munnar_echo_point",
+  "munnar_anamudi",
+  "open_ordered_points",
+  "open_avoid_point",
+  "open_overhead_base",
+  "lodhi_sheesh_sides",
+  "lodhi_athpula_no_lake",
+  "lodhi_three_in_order",
+  "delhi_sansad_east",
+  "delhi_canals_low",
+  "delhi_gate_too_high",
+  "chowk_gurudwara_town_hall",
+  "chowk_masjid_no_fort",
+  "chowk_dariba_low",
+  "munnar_meesapulimala_west",
+  "munnar_shola_no_lake",
+  "munnar_anamudi_too_high",
+  "open_impossible_tower"
+ ],
+ "seed": 0,
+ "providers": [
+  "openai",
+  "gemini"
+ ],
+ "planner": "openai [COST=LOW, effort=low] (gpt-5-nano, gpt-4.1-nano) -> gemini (gemini-3.7-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.5-flash-lite, gemini-3.1-flash-lite, gemini-3.0-flash, gemini-2.5-flash, gemini-2.5-flash-lite)",
+ "model_ladder": [
+  "gpt-5-nano",
+  "gpt-4.1-nano"
+ ],
+ "reasoning_effort": "low",
+ "finished": "2026-11-16T23:42:21"
+}

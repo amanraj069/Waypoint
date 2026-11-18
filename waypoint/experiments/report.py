@@ -140,7 +140,21 @@ def format_summary(summary: dict) -> str:
         ("  any finding, warnings too", lambda s: pct(s["any_violation_rate"])),
         ("  caught, then corrected", lambda s: pct(s["ground_correction_rate"])),
         ("completed", lambda s: f"{pct(s['completion_rate'])} ({s['completed']}/{s['planned']})"),
+        ("mission accomplished (ground truth)", lambda s: f"{pct(of(s, 'intent.accomplished_rate'))} (n={of(s, 'intent.scored') or 0})"),
+        ("  95% interval", lambda s: _interval(of(s, "intent.accomplished_ci95"))),
+        ("  mean share of the mission done", lambda s: pct(of(s, "intent.mean_score"))),
+        ("  impossible missions refused", lambda s: f"{pct(of(s, 'intent.correct_refusal_rate'))} (n={of(s, 'intent.infeasible_missions') or 0})"),
+        ("  possible missions refused", lambda s: pct(of(s, "intent.false_refusal_rate"))),
+        ("  flights that gave up a requirement", lambda s: str(of(s, "intent.relaxed_flights") or 0)),
+        ("  touchdown error, median", lambda s: num(of(s, "intent.median_touchdown_error_m"), " m")),
+        ("intent read exactly right", lambda s: f"{pct(of(s, 'extraction.exact_rate'))} (n={of(s, 'extraction.read') or 0})"),
+        ("  target F1", lambda s: num(of(s, "extraction.mean_target_f1"))),
         ("crashed / broke a keep-out", lambda s: f"{pct(s['crash_rate'])} / {pct(s['separation_breach_rate'])}"),
+        ("repair fixed on the ground", lambda s: f"{pct(of(s, 'repair.ground_fix_rate'))} ({of(s, 'repair.ground_fixed') or 0}/{of(s, 'repair.ground_tried') or 0})"),
+        ("repair fixed in the air", lambda s: f"{pct(of(s, 'repair.inflight_fix_rate'))} ({of(s, 'repair.inflight_fixed') or 0}/{of(s, 'repair.inflight_tried') or 0})"),
+        ("  repair time, median", lambda s: num(of(s, "repair.median_ms"), " ms")),
+        ("shield stepped in (flights)", lambda s: pct(of(s, "shield.flights_with_interventions"))),
+        ("hovered through replans, mean", lambda s: num(of(s, "hover_hold_s.mean"), " s")),
         ("in-flight replans triggered", lambda s: str(of(s, "replans.triggered"))),
         ("  passed 1st try", lambda s: pct(of(s, "replans.first_try_rate"))),
         ("  passed within 2 tries", lambda s: pct(of(s, "replans.within_two_rate"))),
@@ -152,6 +166,7 @@ def format_summary(summary: dict) -> str:
         ("baseline crashed", lambda s: pct(of(s, "tradeoff.baseline_crash_rate"))),
         ("baseline broke a keep-out", lambda s: pct(of(s, "tradeoff.baseline_separation_breach_rate"))),
         ("baseline flew a refused plan", lambda s: pct(of(s, "tradeoff.baseline_unsafe_plan_rate"))),
+        ("baseline accomplished the mission", lambda s: pct(of(s, "intent.baseline_accomplished_rate"))),
         ("planner calls", lambda s: str(of(s, "cost.llm_calls"))),
         ("  output tokens per flight pair", lambda s: num(of(s, "cost.tokens_out_per_flight"))),
         ("  input tokens (cached)", lambda s: f"{of(s, 'cost.tokens_in') or 0:,} ({_share(s)})"),
@@ -170,6 +185,16 @@ def format_summary(summary: dict) -> str:
             "first-plan prompt; a catch-rate gap between them is sampling noise. Compare the",
             "pooled rate across hierarchical and flat instead.",
         ]
+
+    tiers = sorted({t for c in conditions for t in summary[c].get("replan_tiers", {})})
+    if tiers:
+        body += ["", "replan latency by who answered (median s, n):"]
+        for tier in tiers:
+            cells = []
+            for c, w in zip(conditions, columns):
+                stats = summary[c].get("replan_tiers", {}).get(tier)
+                cells.append(("-" if not stats else f"{stats['median_latency_s']:.3f} ({stats['n']})").rjust(w))
+            body.append(("  " + {"repair": "deterministic repair", "llm": "the LLM"}.get(tier, tier)).ljust(width) + "  ".join(cells))
 
     faults = sorted({f for c in conditions for f in summary[c]["latency_s"]["by_fault"]})
     if faults:

@@ -2,11 +2,14 @@
 
 For each condition, mission and repeat:
 
-1. **verified**: the full closed loop, as `run_full` flies it, with the
-   condition's planner. The first plan the planner returns is kept.
+1. **verified**: the closed loop with the condition's planner and system
+   (`full` unless the condition says otherwise; `classic`, `runtime-guard`
+   and the rest are the comparisons). The first plan the planner returns is
+   kept.
 2. **baseline** (unless turned off): the same first plan, the same faults and
-   the same backend, with the verifier swapped for one that reports what it
-   would have found and passes everything. In-flight replans still go to the
+   the same backend, under the `no-gate` system: the verifier swapped for one
+   that reports what it would have found and passes everything, no shield,
+   no repair. In-flight replans still go to the
    planner, unverified, unless `baseline_replans` is off: then the baseline
    flies its first plan without adapting at all, and costs no planner calls.
    This exists only to measure what safety costs; it is never how a mission
@@ -39,8 +42,9 @@ from datetime import datetime
 from pathlib import Path
 
 from waypoint.backends import make_backend
-from waypoint.experiments.spec import Batch, Scenario, prepare
-from waypoint.orchestrator.loop import run_mission
+from waypoint.experiments.spec import Batch, Condition, Scenario, prepare
+from waypoint.orchestrator.loop import recording, run_mission
+from waypoint.orchestrator.options import NO_GATE, SystemOptions
 from waypoint.paths import ROOT
 from waypoint.planner import Plan, PlannerOptions, plan, replan
 from waypoint.planner.config import (
@@ -52,7 +56,6 @@ from waypoint.planner.config import (
     get_reasoning_effort,
 )
 from waypoint.planner.llm_planner import usage_since, usage_snapshot
-from waypoint.verifier import VerificationResult, verify
 
 EXPERIMENTS_DIR = ROOT / "experiments"
 RESULTS_DIR = EXPERIMENTS_DIR / "runs"
@@ -68,16 +71,15 @@ def llm_planners(options: PlannerOptions) -> tuple[Callable[..., Plan], Callable
     return functools.partial(plan, options=options), functools.partial(replan, options=options)
 
 
-def unverified(candidate: Plan, constraints, *, config=None, world=None) -> VerificationResult:
+def unverified(candidate: Plan, constraints, *, config=None, world=None, intent=None):
     """The baseline's gate: runs the real checks, records what they found, refuses nothing."""
-    found = verify(candidate, constraints, config=config, world=world)
-    return VerificationResult(passed=True, violations=found.violations)
+    return recording(candidate, constraints, config=config, world=world, intent=intent)
 
 
 @dataclass
 class BatchConfig:
     missions_path: Path
-    conditions: list[PlannerOptions]
+    conditions: list[Condition]
     backend: str = "custom"
     seed: int = 0
     repeats: int = 1
@@ -100,6 +102,7 @@ def run_batch(
     progress: Callable[[str], None] = print,
 ) -> Path:
     """Fly the batch and return its result directory."""
+    config.conditions = [Condition.of(c) for c in config.conditions]
     batch = Batch.load(config.missions_path)
     missions = [m for m in batch.missions if not config.only or m.id in config.only]
     if config.only:
@@ -149,14 +152,14 @@ def run_batch(
 
     total =len(config.conditions) * len(missions) * config.repeats
     done = 0
-    for options in config.conditions:
-        planner, replanner = planners(options)
+    for condition in config.conditions:
+        planner, replanner = planners(condition.planner)
         for spec in missions:
             for repeat in range(config.repeats):
                 done += 1
-                tag = f"[{done}/{total}] {options.label} {spec.id}" + (f" r{repeat}" if config.repeats > 1 else "")
+                tag = f"[{done}/{total}] {condition.label} {spec.id}" + (f" r{repeat}" if config.repeats > 1 else "")
                 progress(f"{tag} ...")
-                entry = _fly_pair(config, options, spec, repeat, planner, replanner, out)
+                entry = _fly_pair(config, condition, spec, repeat, planner, replanner, out)
                 manifest["flights"].append(entry)
                 _write(out, manifest)
                 progress(f"{tag} {_describe(entry)}")
@@ -168,13 +171,15 @@ def run_batch(
     return out
 
 
-def _fly_pair(config, options, spec, repeat, planner, replanner, out: Path) -> dict:
-    where = out / options.label / spec.id
+def _fly_pair(config, condition: Condition, spec, repeat, planner, replanner, out: Path) -> dict:
+    options = condition.planner
+    where = out / condition.label.replace("|", "@") / spec.id
     if config.repeats > 1:
         where = where / f"r{repeat}"
     entry: dict = {
-        "condition": options.label,
+        "condition": condition.label,
         "options": {"hierarchical": options.hierarchical, "violation_feedback": options.violation_feedback},
+        "system": condition.system.record(),
         "mission_id": spec.id,
         "mission": spec.mission,
         "world": spec.world,
@@ -201,12 +206,14 @@ def _fly_pair(config, options, spec, repeat, planner, replanner, out: Path) -> d
         return result
 
     try:
-        entry["verified"] = _fly(config, scenario, keep_first, replanner, None, where / "verified", out)
+        entry["verified"] = _fly(
+            config, scenario, keep_first, replanner, None, where / "verified", out, system=condition.system,
+        )
         if config.baseline and first:
             reuse = lambda *args, **kwargs: first[0].model_copy(deep=True)  # noqa: E731
             entry["baseline"] = _fly(
                 config, scenario, reuse, replanner, unverified, where / "baseline", out,
-                adapt=config.baseline_replans,
+                adapt=config.baseline_replans, system=NO_GATE,
             )
     except Exception as exc:  # noqa: BLE001
         entry["error"] = f"{type(exc).__name__}: {exc}"
@@ -215,7 +222,7 @@ def _fly_pair(config, options, spec, repeat, planner, replanner, out: Path) -> d
 
 def _fly(
     config: BatchConfig, scenario: Scenario, planner, replanner, verifier, runs_dir: Path, out: Path,
-    *, adapt: bool = True,
+    *, adapt: bool = True, system: SystemOptions = NO_GATE,
 ) -> dict:
     backend = make_backend(config.backend, world=scenario.world, wind=scenario.wind)
     started = time.perf_counter()
@@ -233,6 +240,7 @@ def _fly(
             replanner=replanner,
             verifier=verifier,
             adapt=adapt,
+            system=system,
             max_replan_attempts=config.max_replan_attempts,
             max_total_replans=config.max_total_replans,
             verbose=False,

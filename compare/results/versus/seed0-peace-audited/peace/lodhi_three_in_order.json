@@ -1,0 +1,205 @@
+{
+ "system": "peace",
+ "mission_id": "lodhi_three_in_order",
+ "mission": "first photograph the Glass House, then Bara Gumbad, then Mohammed Shah's Tomb, and land at the start",
+ "world": "lodhi",
+ "faults_spec": "random",
+ "seed": 0,
+ "error": null,
+ "faults": [
+  {
+   "type": "WIND_GUST",
+   "trigger": {
+    "time": 22.7,
+    "battery_below": null,
+    "at_waypoint": null,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 9.8,
+   "direction": 10.9,
+   "vertical": 0.0,
+   "duration": 3.6,
+   "obstacle": null,
+   "ahead": null,
+   "name": "gust"
+  }
+ ],
+ "usage": {
+  "openai:gpt-5-nano": {
+   "calls": 1,
+   "input": 3014,
+   "cached": 0,
+   "output": 8403,
+   "reasoning": 7488
+  }
+ },
+ "detail": {
+  "outcome": "completed",
+  "message": "Mission complete",
+  "llm_calls": 1,
+  "replans": 0,
+  "steps": [
+   {
+    "tool": "takeoff",
+    "args": {
+     "height": 25.0
+    },
+    "result": "Takeoff complete. Altitude=24.8m",
+    "plan": 0
+   },
+   {
+    "tool": "waypoint",
+    "args": {
+     "x": 145.0,
+     "y": 170.0,
+     "z": 20.0,
+     "yaw": -45.0,
+     "tolerance": 0.5
+    },
+    "result": "Moved to waypoint (145.0,170.0,20.0)m. Position: (145.1,170.3,20.0)m, yaw=-45\u00b0, alt=20.0m",
+    "plan": 0
+   },
+   {
+    "tool": "capture",
+    "args": {},
+    "result": "Photograph taken at (145.1,170.3,20.0)m, yaw=-45\u00b0",
+    "plan": 0
+   },
+   {
+    "tool": "hover",
+    "args": {
+     "seconds": 3.0
+    },
+    "result": "Hovered 3s at (145.1,170.3,20.0)m",
+    "plan": 0
+   },
+   {
+    "tool": "waypoint",
+    "args": {
+     "x": 60.0,
+     "y": 170.0,
+     "z": 20.0,
+     "yaw": 139.0,
+     "tolerance": 0.5
+    },
+    "result": "Moved to waypoint (60.0,170.0,20.0)m. Position: (60.4,170.0,20.0)m, yaw=139\u00b0, alt=20.0m",
+    "plan": 0
+   },
+   {
+    "tool": "capture",
+    "args": {},
+    "result": "Photograph taken at (60.4,170.0,20.0)m, yaw=139\u00b0",
+    "plan": 0
+   },
+   {
+    "tool": "hover",
+    "args": {
+     "seconds": 3.0
+    },
+    "result": "Hovered 3s at (60.4,170.0,20.0)m",
+    "plan": 0
+   },
+   {
+    "tool": "waypoint",
+    "args": {
+     "x": -80.0,
+     "y": 60.0,
+     "z": 20.0,
+     "yaw": 146.3,
+     "tolerance": 0.5
+    },
+    "result": "Moved to waypoint (-80.0,60.0,20.0)m. Position: (-79.8,60.2,20.0)m, yaw=146\u00b0, alt=20.0m",
+    "plan": 0
+   },
+   {
+    "tool": "capture",
+    "args": {},
+    "result": "Photograph taken at (-79.8,60.2,20.0)m, yaw=146\u00b0",
+    "plan": 0
+   },
+   {
+    "tool": "hover",
+    "args": {
+     "seconds": 3.0
+    },
+    "result": "Hovered 3s at (-79.8,60.2,20.0)m",
+    "plan": 0
+   },
+   {
+    "tool": "waypoint",
+    "args": {
+     "x": 0.0,
+     "y": 0.0,
+     "z": 20.0,
+     "yaw": 0.0,
+     "tolerance": 0.5
+    },
+    "result": "Moved to waypoint (0.0,0.0,20.0)m. Position: (-0.2,0.2,20.0)m, yaw=0\u00b0, alt=20.0m",
+    "plan": 0
+   },
+   {
+    "tool": "land",
+    "args": {
+     "x": 0.0,
+     "y": 0.0
+    },
+    "result": "Landed at (0.0,0.0), altitude=-0.00m",
+    "plan": 0
+   }
+  ],
+  "constraint_aborts": 0,
+  "fence_half_side_m": 465,
+  "wall_s": 78.5
+ },
+ "grade": {
+  "flew": true,
+  "landed": true,
+  "crashed": false,
+  "battery_depleted": false,
+  "keep_out_breaches": 0,
+  "left_geofence": false,
+  "seconds_outside_geofence": 0.0,
+  "above_ceiling": false,
+  "max_altitude_m": 27.4,
+  "distance_m": 659.7,
+  "flight_s": 96.2,
+  "battery_left_pct": 81.9,
+  "expected_feasible": true,
+  "accomplished": false,
+  "refused": null,
+  "share_done": 0.6667,
+  "targets": [
+   {
+    "name": "the Glass House",
+    "action": "CAPTURE",
+    "required_views": 1,
+    "views": 1,
+    "missing_sides": [],
+    "served": true,
+    "score": 1.0
+   },
+   {
+    "name": "Bara Gumbad",
+    "action": "CAPTURE",
+    "required_views": 1,
+    "views": 0,
+    "missing_sides": [],
+    "served": false,
+    "score": 0.0
+   },
+   {
+    "name": "Mohammed Shah's Tomb",
+    "action": "CAPTURE",
+    "required_views": 1,
+    "views": 1,
+    "missing_sides": [],
+    "served": true,
+    "score": 1.0
+   }
+  ],
+  "why_not": "1 of 3 target(s) not served: Bara Gumbad",
+  "touchdown_error_m": 0.25
+ },
+ "outcome": "completed"
+}

@@ -109,7 +109,7 @@ def write_scene(run: dict, out_dir: Path, *, px4: bool = False) -> Scene:
         _terrain_model(collide=px4, flat=world.terrain is None),
         *_buildings(world),
         _trees(world),
-        *_pads(world, home, run.get("ticks") or [], pads.get("landing")),
+        *_pads(world, home, run.get("ticks") or [], pads.get("landing"), beam=run.get("beacons", True)),
         _envelope(world, constraints),
         _route(world, _on_ground(world, home), run.get("waypoints") or []),
         "" if px4 else _uav(world, home),
@@ -343,17 +343,27 @@ def _trees(world: World) -> str:
     </model>"""
 
 
-def _pads(world: World, home: tuple, ticks: list[dict], landing: list | None = None) -> list[str]:
+def _pads(
+    world: World, home: tuple, ticks: list[dict], landing: list | None = None, *, beam: bool = True,
+) -> list[str]:
     """The launch pad (green), and a landing pad (amber) when it is somewhere else."""
-    pads = [_pad("launch_pad", home[0], home[1], world, PAD)]
+    pads = [_pad("launch_pad", home[0], home[1], world, PAD, beam=beam)]
     end = landing or ([ticks[-1]["x"], ticks[-1]["y"]] if ticks else None)
     if end and math.hypot(end[0] - home[0], end[1] - home[1]) > 5:
-        pads.append(_pad("landing_pad", end[0], end[1], world, LANDING))
+        pads.append(_pad("landing_pad", end[0], end[1], world, LANDING, beam=beam))
     return pads
 
 
-def _pad(name: str, x: float, y: float, world: World, colour: str) -> str:
+def _pad(name: str, x: float, y: float, world: World, colour: str, *, beam: bool = True) -> str:
+    """A pad, with a 30 m beam of light to find it by, unless a camera on the aircraft would take
+    the beam for a mast standing on the pad (`beam=False`)."""
     ground = world.elevation_at(x, y)
+    light = f"""
+        <visual name="beam">
+          <pose>0 0 15 0 0 0</pose>
+          <geometry><cylinder><radius>0.15</radius><length>30</length></cylinder></geometry>
+          {_material(colour, alpha=0.5, emissive=True)}
+        </visual>""" if beam else ""
     return f"""
     <model name="{name}">
       <static>true</static>
@@ -362,12 +372,7 @@ def _pad(name: str, x: float, y: float, world: World, colour: str) -> str:
         <visual name="disc">
           <geometry><cylinder><radius>3</radius><length>0.2</length></cylinder></geometry>
           {_material(colour, emissive=True)}
-        </visual>
-        <visual name="beam">
-          <pose>0 0 15 0 0 0</pose>
-          <geometry><cylinder><radius>0.15</radius><length>30</length></cylinder></geometry>
-          {_material(colour, alpha=0.5, emissive=True)}
-        </visual>
+        </visual>{light}
       </link>
     </model>"""
 
@@ -414,8 +419,12 @@ def _envelope(world: World, constraints: dict) -> str:
     </model>"""
 
 
-def _obstacle(world: World, record: dict, constraints: dict, name: str) -> str:
-    """A known hazard: a cylinder from the ground to its top (or the ceiling)."""
+def _obstacle(world: World, record: dict, constraints: dict, name: str, alpha: float = 0.35) -> str:
+    """A known hazard: a cylinder from the ground to its top (or the ceiling).
+
+    Drawn see-through so the route behind it stays visible, unless `alpha` says
+    otherwise: a camera on the aircraft has to see it as the solid thing it is.
+    """
     ground = world.elevation_at(record["x"], record["y"])
     top = record.get("height")
     height = top if top is not None else constraints.get("max_altitude", 120.0) - ground
@@ -427,7 +436,7 @@ def _obstacle(world: World, record: dict, constraints: dict, name: str) -> str:
       <link name="body">
         <visual name="body">
           <geometry><cylinder><radius>{radius:.2f}</radius><length>{height:.2f}</length></cylinder></geometry>
-          {_material(OBSTACLE, alpha=0.35)}
+          {_material(OBSTACLE, alpha=alpha)}
         </visual>
       </link>
     </model>"""

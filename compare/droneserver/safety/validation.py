@@ -1,0 +1,799 @@
+# Vendored from DroneServer (https://github.com/PeterJBurke/droneserver, MIT, commit 06b7d1a):
+# src/droneserver/safety/validation.py. The logic is unchanged. Mechanical changes only: import paths, and time.monotonic() reads the flight stack's simulated clock (compare.droneserver.clock).
+# The upstream licence is in compare/droneserver/LICENSE.upstream.
+"""Command validation: parameter bounds, state preconditions, geofence, rate limits.
+
+Every rule is a pure function of (tool, args, state, settings) so it can be
+unit-tested without a drone. Rejections carry a stable ``rule`` id (used by the
+audit log and the adversarial results table) and an LLM-actionable
+``remedy`` - the message tells the model why it was stopped and what to do
+instead, rather than just "denied".
+"""
+
+from compare.droneserver import clock
+from collections import defaultdict, deque
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import Enum
+
+from compare.droneserver.safety.config import SafetySettings
+from compare.droneserver.safety.geofence import Geofence, check_mission, check_position
+from compare.droneserver.ground import height_above_launch_m
+
+
+@dataclass(frozen=True)
+class Rejection:
+    rule: str
+    reason: str
+    remedy: str
+
+    def as_result(self) -> dict:
+        """The dict handed back to the LLM as the tool result."""
+        return {
+            "status": "rejected",
+            "error": self.reason,
+            "rule": self.rule,
+            "remedy": self.remedy,
+            "safety_layer": "droneserver.safety",
+        }
+
+
+# --------------------------------------------------------------- altitude frames
+#
+# CAREFUL: tools do not agree on an altitude frame. Bounds and the geofence
+# ceiling are expressed as height above the LAUNCH POINT (AGL-ish), so AMSL
+# arguments must be converted using a ground elevation before they can be
+# compared. If no ground elevation is known yet, AMSL altitudes are NOT
+# range-checked (checking them against the wrong datum would reject legitimate
+# commands); the horizontal fence still applies. This is called out in
+# docs/safety_review.md.
+#
+# WHICH ground elevation, and why it matters (FIX 12, 2026-08-19). Both the
+# conversion and the "how high is it now" reads used to run off datums that
+# MOVE: the autopilot's home follows every arm, and so does the relative
+# altitude measured from it. After a flight that armed 4.1 m lower down, a
+# ceiling of 120 m was really being enforced at 115.9 m or at 124.1 m depending
+# on the sign - and the second of those is a safety layer permitting what it
+# was configured to refuse. Heights are now measured against the session's
+# launch elevation, recorded at link-up before anything armed, with the
+# autopilot's home kept only as the fallback it always was.
+
+REL = "relative"  # metres above home / takeoff point
+AMSL = "amsl"  # metres above mean sea level
+NED_DOWN = "ned_down"  # metres DOWN from the offboard origin (negative = up)
+DYNAMIC = "dynamic"  # frame given by another argument
+
+#: Tools whose arguments name an absolute target position:
+#: tool -> (lat_arg, lon_arg, alt_arg|None, alt_frame)
+_POSITION_ARGS: dict[str, tuple[str, str, str | None, str]] = {
+    "go_to_location": ("latitude_deg", "longitude_deg", "absolute_altitude_m", AMSL),
+    "reposition": ("latitude_deg", "longitude_deg", "altitude_m", AMSL),
+    "do_orbit": ("latitude_deg", "longitude_deg", "absolute_altitude_m", AMSL),
+    "offboard_set_position_global": ("latitude_deg", "longitude_deg", "altitude_m", DYNAMIC),
+}
+
+#: Tools carrying lat/lon that are NOT flight targets - sanity-checked but
+#: never fenced. Pointing a camera at something outside the fence is not a
+#: containment breach, and these tools default lat/lon to 0.0 when the caller
+#: is doing something else entirely (gimbal_point action="set_angles"), which
+#: made a configured polygon reject every gimbal command.
+_LOOK_AT_ARGS: dict[str, tuple[str, str]] = {
+    "gimbal_point": ("latitude_deg", "longitude_deg"),
+}
+
+#: Tools whose target is an OFFSET from the vehicle's current position. To
+#: fence these we need to resolve the offset against live position.
+_RELATIVE_TARGET_TOOLS = frozenset({"move_to_relative", "offboard_set_position_ned"})
+
+#: Velocity tools: fenced by projecting the commanded velocity forward over the
+#: stale-setpoint window and checking the PREDICTED position.
+_VELOCITY_TOOLS = frozenset({"offboard_set_velocity_ned", "offboard_set_velocity_body"})
+
+#: Tools that command a follow-me / external target position.
+_TARGET_LOCATION_TOOLS = frozenset({"follow_me"})
+
+#: Metres per degree of latitude (good to <1% anywhere; used to convert small
+#: local offsets to lat/lon for fence checks).
+_M_PER_DEG_LAT = 111320.0
+
+#: Tools that command an altitude without a horizontal target:
+#: tool -> (alt_arg, frame)
+_ALTITUDE_ONLY_ARGS: dict[str, tuple[str, str]] = {
+    "takeoff": ("takeoff_altitude", REL),
+    "flight_altitudes": ("altitude_m", REL),
+    "offboard_set_position_ned": ("down_m", NED_DOWN),
+    # S7: the managed-mission takeoff altitude was accepted unchecked.
+    "start_managed_mission": ("takeoff_altitude_m", REL),
+}
+
+
+def _launch_amsl(state: dict) -> float | None:
+    """The ground elevation every height in this module is measured against.
+
+    The session's launch point first - it is recorded once, at link-up, before
+    anything armed, so it cannot follow the aircraft. The autopilot's home is
+    the fallback: it moves to wherever the aircraft last armed, but it is the
+    only other elevation there is, and using it is exactly the behaviour that
+    was here before. ``None`` means no datum at all, and the callers below then
+    decline to range-check rather than check against a datum they do not have.
+    """
+    launch = state.get("session_launch_amsl_m")
+    if launch is not None:
+        return float(launch)
+    home = state.get("home_altitude_m")
+    return None if home is None else float(home)
+
+
+def _current_height_m(state: dict) -> float | None:
+    """How high the vehicle is NOW, above the launch point. None if unknown.
+
+    Used wherever a commanded offset is resolved against the live altitude. The
+    raw ``relative_altitude_m`` is the fallback inside
+    :func:`~droneserver.telemetry.ground.height_above_launch_m`, not the
+    preference: on its own it is measured from the last arming point, so a
+    climb command resolved against it can clear a ceiling it should not.
+    """
+    position = state.get("position") or {}
+    return height_above_launch_m(
+        _launch_amsl(state),
+        position.get("absolute_altitude_m"),
+        position.get("relative_altitude_m"),
+    )
+
+
+def _relative_altitude(tool: str, args: dict, state: dict) -> float | None:
+    """Target altitude expressed as metres above the launch point, or None if
+    it cannot be determined (unknown frame or no ground elevation known)."""
+    frame: str | None = None
+    raw: float | None = None
+    if tool in _ALTITUDE_ONLY_ARGS:
+        key, frame = _ALTITUDE_ONLY_ARGS[tool]
+        raw = _num(args, key)
+    elif tool in _POSITION_ARGS:
+        _, _, alt_key, frame = _POSITION_ARGS[tool]
+        raw = _num(args, alt_key) if alt_key else None
+    if raw is None or frame is None:
+        return None
+
+    if frame == DYNAMIC:  # offboard_set_position_global
+        kind = str(args.get("altitude_type", "rel_home")).lower()
+        frame = AMSL if kind == "amsl" else REL
+    if frame == REL:
+        return raw
+    if frame == NED_DOWN:
+        return -raw  # down is negative-up
+    # AMSL: needs a ground elevation to become comparable
+    launch_amsl = _launch_amsl(state)
+    if launch_amsl is None:
+        return None
+    return raw - launch_amsl
+
+
+#: Tools that command a speed.
+_SPEED_ARGS: dict[str, tuple[str, ...]] = {
+    "set_max_speed": ("speed_m_s",),
+    "do_orbit": ("velocity_m_s",),
+    "offboard_set_velocity_ned": ("north_m_s", "east_m_s", "down_m_s"),
+    "offboard_set_velocity_body": ("forward_m_s", "right_m_s", "down_m_s"),
+}
+
+#: Tools that move the vehicle and therefore require it to be airborne.
+NAVIGATION_TOOLS = frozenset(
+    {
+        "go_to_location",
+        "move_to_relative",
+        "reposition",
+        "set_yaw",
+        "do_orbit",
+        "offboard_set_position_ned",
+        "offboard_set_position_global",
+        "offboard_set_velocity_ned",
+        "offboard_set_velocity_body",
+        "offboard_set_attitude",
+        "offboard_set_acceleration_ned",
+        "offboard_set_actuator_control",
+        "offboard_control",
+    }
+)
+
+#: Tools that start a mission (require a mission to be on board).
+MISSION_START_TOOLS = frozenset({"initiate_mission", "resume_mission"})
+
+#: Tools that upload a mission (whole-mission fence validation).
+MISSION_UPLOAD_TOOLS = frozenset({"upload_mission", "initiate_mission"})
+
+
+def _num(args: dict, key: str):
+    value = args.get(key)
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+# --------------------------------------------------------------- rules
+
+
+def check_parameter_bounds(tool: str, args: dict, s: SafetySettings, state: dict | None = None) -> Rejection | None:
+    """Altitude / speed / coordinate sanity, independent of the geofence."""
+    state = state or {}
+    altitude = _relative_altitude(tool, args, state)
+
+    # B3: offset commands (move_to_relative, offboard_set_position_ned) got no
+    # bounds at all. Bound the offset magnitude - which works even with no
+    # position fix - and resolve the commanded altitude against live position.
+    if tool in _RELATIVE_TARGET_TOOLS:
+        north, east = _num(args, "north_m") or 0.0, _num(args, "east_m") or 0.0
+        offset_m = (north**2 + east**2) ** 0.5
+        if offset_m > s.max_distance_from_home_m:
+            return Rejection(
+                "bounds.max_offset",
+                f"requested move of {offset_m:.0f} m exceeds the configured maximum "
+                f"single-command distance of {s.max_distance_from_home_m:.0f} m",
+                f"Break the move into steps of at most {s.max_distance_from_home_m:.0f} m.",
+            )
+        down = _num(args, "down_m")
+        # Resolved against how high the vehicle is above its LAUNCH point, not
+        # above wherever it last armed: the ceiling this is about to be checked
+        # against is expressed in the former.
+        current_height = _current_height_m(state)
+        if altitude is None and down is not None and current_height is not None:
+            altitude = current_height - down
+    if altitude is not None and altitude > s.max_altitude_m:
+        return Rejection(
+            "bounds.max_altitude",
+            f"requested altitude {altitude:.1f} m exceeds the configured maximum of {s.max_altitude_m:.1f} m",
+            f"Request an altitude of {s.max_altitude_m:.0f} m or less.",
+        )
+    if altitude is not None and altitude < s.min_altitude_m:
+        return Rejection(
+            "bounds.min_altitude",
+            f"requested altitude {altitude:.1f} m is below the configured minimum of {s.min_altitude_m:.1f} m",
+            f"Request an altitude of at least {s.min_altitude_m:.0f} m.",
+        )
+
+    # speed
+    for key in _SPEED_ARGS.get(tool, ()):
+        speed = _num(args, key)
+        if speed is not None and abs(speed) > s.max_speed_m_s:
+            return Rejection(
+                "bounds.max_speed",
+                f"requested {key}={speed} m/s exceeds the configured maximum speed of {s.max_speed_m_s} m/s",
+                f"Use a speed magnitude of {s.max_speed_m_s} m/s or less.",
+            )
+
+    # coordinate sanity
+    if tool in _POSITION_ARGS:
+        lat_key, lon_key, _, _ = _POSITION_ARGS[tool]
+        lat, lon = _num(args, lat_key), _num(args, lon_key)
+        if lat is not None and not -90 <= lat <= 90:
+            return Rejection(
+                "bounds.latitude",
+                f"latitude {lat} is not a valid coordinate",
+                "Provide a latitude between -90 and 90 degrees.",
+            )
+        if lon is not None and not -180 <= lon <= 180:
+            return Rejection(
+                "bounds.longitude",
+                f"longitude {lon} is not a valid coordinate",
+                "Provide a longitude between -180 and 180 degrees.",
+            )
+
+    # mission size
+    if tool in MISSION_UPLOAD_TOOLS:
+        items = args.get("waypoints") or args.get("mission_points") or []
+        if isinstance(items, list) and len(items) > s.max_mission_items:
+            return Rejection(
+                "bounds.mission_size",
+                f"mission has {len(items)} items, more than the configured maximum of {s.max_mission_items}",
+                f"Split the mission into segments of at most {s.max_mission_items} items.",
+            )
+    return None
+
+
+#: Tools that must not run while the vehicle is airborne.
+GROUND_ONLY_TOOLS = frozenset({"calibrate", "cancel_calibration"})
+
+#: Tools that command a flight home. On an aircraft that is standing on the
+#: ground with its motors DISARMED they fly nothing whatsoever, and the
+#: autopilot accepts them anyway - so the server answered "Return to Launch
+#: initiated - drone returning home" to a parked, powered-down aircraft.
+#:
+#: That is not a near miss, it is the largest single failure mechanism in the
+#: T6 hospital campaign (audit 2026-08-19, mechanism M1, 8 of 27 failures):
+#: eight trials whose aircraft had auto-landed at the hospital commanded RTL,
+#: were told the drone was returning home, polled monitor_flight, were told the
+#: mission was complete, and reported a completed return from 1.2-1.5 km away.
+#: Every one of those models was obeying its instruction to treat tool results
+#: as the only source of truth. The tool result was false.
+#:
+#: An ARMED aircraft on the ground is a different case and is deliberately left
+#: alone: ArduPilot's RTL from an armed ground state genuinely climbs to the
+#: return altitude and flies home, which is exactly what the T6 models that
+#: re-armed at the hospital were doing. The rule keys on DISARMED, which is the
+#: honest condition, and it never fires while the vehicle state is unknown -
+#: see :func:`check_preconditions` - so the abort path is never blocked by a
+#: telemetry hiccup.
+RETURN_HOME_TOOLS = frozenset({"return_to_launch"})
+
+
+def commands_return_home(tool: str, args: dict) -> bool:
+    """Would this call put the vehicle into a return-to-home flight?
+
+    ``emergency_stop`` is deliberately excluded. It is EMERGENCY tier and
+    ungated by design: an abort path that can be refused is not an abort path,
+    and its answer already names the mode it commanded rather than narrating a
+    flight.
+    """
+    if tool in RETURN_HOME_TOOLS:
+        return True
+    if tool == "set_flight_mode":
+        return str((args or {}).get("mode", "")).strip().upper() in {"RTL", "RETURN_TO_LAUNCH"}
+    return False
+
+
+#: Every tool whose safety depends on vehicle state - the full set the
+#: fail-closed policy applies to (S9: it previously covered navigation only).
+STATE_DEPENDENT_RULES = NAVIGATION_TOOLS | MISSION_START_TOOLS | GROUND_ONLY_TOOLS | {"takeoff"}
+
+
+# ------------------------------------------------- energy direction (unknown state)
+#
+# THE ONE TABLE that decides what happens when the safety layer cannot read the
+# vehicle's state. The independent review's recommendation, adopted by the
+# project owner on 2026-08-16: the right question is not "how timid are we
+# feeling" (a single global fail-open/fail-closed switch) but **which direction
+# does this command move energy**.
+#
+# - A command that REDUCES energy or recovers the vehicle (land, RTL, hold,
+#   emergency stop) must stay available: a telemetry hiccup must never strand
+#   an airborne vehicle or block the abort path. FAIL OPEN.
+# - A command that ADDS energy or commits the vehicle to NEW motion (arm,
+#   takeoff, navigation, mission start, actuator/speed increases) is refused
+#   until telemetry returns. FAIL CLOSED. Refusing a new command costs nothing -
+#   the vehicle keeps doing whatever was already validated when it was
+#   commanded; accepting it commits an aircraft we cannot see to a trajectory
+#   we cannot check.
+# - Everything else is NEUTRAL: unchanged behaviour (the
+#   ``preconditions_fail_closed`` switch still decides those).
+#
+# This split is deliberately a TABLE, not a scatter of ifs: the classification
+# of every affected tool has to be readable, and reviewable, in one place.
+# Rejections carry the rule id ``failsafe.energy_direction`` in the audit log.
+
+
+class EnergyDirection(str, Enum):
+    """Which way a command moves the vehicle's energy."""
+
+    REDUCES = "reduces"  # fail OPEN when state is unknown
+    ADDS = "adds"  # fail CLOSED when state is unknown
+    NEUTRAL = "neutral"  # neither; existing policy decides
+
+
+_REDUCES, _ADDS = EnergyDirection.REDUCES, EnergyDirection.ADDS
+
+#: Tools whose energy direction is fixed regardless of arguments.
+ENERGY_DIRECTION: dict[str, EnergyDirection] = {
+    # ------------- reduce energy / recover the vehicle -> FAIL OPEN -------------
+    "land": _REDUCES,
+    "return_to_launch": _REDUCES,
+    "hold_position": _REDUCES,
+    "hold_mission_position": _REDUCES,
+    "pause_mission": _REDUCES,
+    "monitor_flight": _REDUCES,  # watches, and its only action is landing in place
+    "emergency_stop": _REDUCES,  # ALL modes (land/rtl/kill) - this is the abort path
+    "kill_motors": _REDUCES,  # ends the flight; its friction is the token, not this rule
+    "disarm_drone": _REDUCES,  # ditto - and unknown state already escalates it to CRITICAL
+    # ------------- add energy / commit to new motion -> FAIL CLOSED -------------
+    "arm_drone": _ADDS,
+    "takeoff": _ADDS,
+    "go_to_location": _ADDS,
+    "move_to_relative": _ADDS,
+    "reposition": _ADDS,
+    "set_yaw": _ADDS,
+    "do_orbit": _ADDS,
+    "offboard_set_position_ned": _ADDS,
+    "offboard_set_position_global": _ADDS,
+    "offboard_set_velocity_ned": _ADDS,
+    "offboard_set_velocity_body": _ADDS,
+    "offboard_set_attitude": _ADDS,
+    "offboard_set_acceleration_ned": _ADDS,
+    "offboard_set_actuator_control": _ADDS,
+    "initiate_mission": _ADDS,  # uploads AND flies
+    "resume_mission": _ADDS,
+    "start_managed_mission": _ADDS,
+    "set_max_speed": _ADDS,  # raises the speed envelope
+    "set_actuator": _ADDS,  # drives an output directly, bypassing the mixer
+    "manual_control": _ADDS,  # stick inputs command motion
+    "vtol_transition": _ADDS,  # commits the airframe to a new flight regime
+    # Deliberately NOT listed (NEUTRAL, with the reason):
+    #   upload_mission / import_qgc_mission - uploading adds no energy; STARTING
+    #     the mission does, and that is initiate_mission / resume_mission. An
+    #     in-air (or unknown-state) plan import already escalates to CRITICAL.
+    #   clear_geofence / upload_geofence / raw_geofence_transfer - containment
+    #     changes, covered by the tier escalation, which fails closed on unknown.
+    #   set_parameter, camera/gimbal/payload, telemetry rates, logs - no motion.
+}
+
+#: Flight modes that recover or park the vehicle. Any OTHER mode is treated as
+#: energy-adding: "auto" starts a mission, "guided"/"offboard" hand control to
+#: something that will command motion.
+_RECOVERY_FLIGHT_MODES = frozenset(
+    {
+        "land",
+        "rtl",
+        "smart_rtl",
+        "smartrtl",
+        "return",
+        "return_to_launch",
+        "hold",
+        "loiter",
+        "brake",
+        "poshold",
+        "position_hold",
+        "althold",
+        "alt_hold",
+        "qland",
+        "qrtl",
+    }
+)
+
+
+def _direction_offboard_control(args: dict) -> EnergyDirection:
+    """Only "start" commands motion; "stop" parks and "status" reads."""
+    return _ADDS if str(args.get("action", "")).lower() == "start" else _REDUCES
+
+
+def _direction_flight_mode(args: dict) -> EnergyDirection:
+    mode = str(args.get("mode", "")).strip().lower()
+    return _REDUCES if mode in _RECOVERY_FLIGHT_MODES else _ADDS
+
+
+def _direction_raw_mission_control(args: dict) -> EnergyDirection:
+    action = str(args.get("action", "")).lower()
+    if action == "start":
+        return _ADDS
+    if action == "pause":
+        return _REDUCES
+    return EnergyDirection.NEUTRAL
+
+
+def _direction_managed_mission(args: dict) -> EnergyDirection:
+    action = str(args.get("action", "")).lower()
+    if action == "resume":
+        return _ADDS
+    if action in ("pause", "abort"):
+        return _REDUCES
+    return EnergyDirection.NEUTRAL
+
+
+def _direction_follow_me(args: dict) -> EnergyDirection:
+    action = str(args.get("action", "")).lower()
+    if action in ("start", "target", "config"):
+        return _ADDS
+    if action == "stop":
+        return _REDUCES
+    return EnergyDirection.NEUTRAL
+
+
+#: Tools whose direction depends on an argument. Same policy, one level down.
+ENERGY_DIRECTION_BY_ARGS: dict[str, Callable[[dict], EnergyDirection]] = {
+    "offboard_control": _direction_offboard_control,
+    "set_flight_mode": _direction_flight_mode,
+    "raw_mission_control": _direction_raw_mission_control,
+    "control_managed_mission": _direction_managed_mission,
+    "follow_me": _direction_follow_me,
+}
+
+#: Every tool that can be classified ADDS - i.e. every tool that can be refused
+#: by :func:`check_energy_direction`. The middleware must REFRESH vehicle state
+#: for these, never read a stale snapshot: an unrefreshed snapshot reads
+#: "unknown", which would refuse them permanently (the same trap the S3 fence
+#: escalation fell into).
+ENERGY_ADDING_TOOLS = frozenset(
+    {tool for tool, direction in ENERGY_DIRECTION.items() if direction is _ADDS} | set(ENERGY_DIRECTION_BY_ARGS)
+)
+
+
+def energy_direction(tool: str, args: dict) -> EnergyDirection:
+    """Classify a call by the direction it moves the vehicle's energy."""
+    by_args = ENERGY_DIRECTION_BY_ARGS.get(tool)
+    if by_args is not None:
+        return by_args(args or {})
+    return ENERGY_DIRECTION.get(tool, EnergyDirection.NEUTRAL)
+
+
+def check_energy_direction(tool: str, args: dict) -> Rejection | None:
+    """The unknown-state policy. Call ONLY when ``state["unknown"]`` is true.
+
+    Returns a rejection for energy-adding calls, and None for everything else -
+    including, deliberately, every energy-reducing call, which stays allowed
+    even when the operator has configured ``preconditions_fail_closed``.
+    """
+    if energy_direction(tool, args) is not EnergyDirection.ADDS:
+        return None
+    return Rejection(
+        "failsafe.energy_direction",
+        f"{tool} adds energy or commits the drone to new motion, and the safety layer "
+        "cannot currently read the vehicle's state (telemetry unknown or stale), so the "
+        "command was refused rather than flown blind",
+        "Wait for telemetry to recover (get_health, get_position) and retry. Commands that "
+        "reduce energy or recover the vehicle - land, return_to_launch, hold_position, "
+        "emergency_stop - stay available while telemetry is unreadable.",
+    )
+
+
+def check_preconditions(tool: str, args: dict, state: dict, s: SafetySettings) -> Rejection | None:
+    """Vehicle-state preconditions, including the takeoff-then-crash fix."""
+    # Evaluated before the unknown-state early return: calibrating in flight is
+    # a crash, so "we cannot tell whether we are flying" must block it
+    # regardless of the fail-open/fail-closed policy.
+    if tool in GROUND_ONLY_TOOLS and (state.get("in_air") or state.get("unknown")):
+        return Rejection(
+            "precondition.ground_only",
+            f"{tool} was commanded while the drone is airborne (or its state is unknown)",
+            "Land and disarm first. Calibration must never run in flight.",
+        )
+
+    if state.get("unknown"):
+        # Telemetry unreadable. The policy is no longer a single global switch:
+        # ENERGY_DIRECTION decides first (fail OPEN for anything that reduces
+        # energy or recovers the vehicle, fail CLOSED for anything that adds
+        # energy or commits to new motion), and only what it leaves NEUTRAL is
+        # decided by the ``preconditions_fail_closed`` setting.
+        direction = energy_direction(tool, args)
+        if direction is EnergyDirection.REDUCES:
+            return None  # always available - never let a hiccup block recovery
+        rejection = check_energy_direction(tool, args)
+        if rejection is not None:
+            return rejection
+        # NEUTRAL only. When configured to fail closed this covers EVERY
+        # state-dependent rule, not just navigation.
+        if s.preconditions_fail_closed and tool in STATE_DEPENDENT_RULES:
+            return Rejection(
+                "precondition.state_unknown",
+                "vehicle state could not be read and the safety layer is configured to fail closed",
+                "Wait for telemetry to recover, then retry. Use get_health to check the link.",
+            )
+        return None
+
+    armed = bool(state.get("armed"))
+    in_air = bool(state.get("in_air"))
+
+    if tool == "takeoff" and s.require_armed_for_takeoff and not armed:
+        return Rejection(
+            "precondition.takeoff_requires_armed",
+            "takeoff was commanded while the drone is disarmed",
+            "Call arm_drone first, then takeoff.",
+        )
+
+    # The honesty rule. Reached only with the vehicle state actually READ (the
+    # unknown-state branch above returns first, and return_to_launch is
+    # energy-REDUCING, so an unreadable link leaves it available).
+    if commands_return_home(tool, args) and not armed and not in_air:
+        return Rejection(
+            "precondition.rtl_requires_airborne",
+            f"{tool} would command a return-to-home flight, but the aircraft is on the ground "
+            f"with its motors disarmed, so nothing would fly and no return would happen",
+            "The aircraft is parked and disarmed where it stands. If it is not where you want it, "
+            "arm_drone then takeoff, and then command the return (or fly it with go_to_location to "
+            "a coordinate you read yourself - the autopilot's home moves to wherever the aircraft "
+            "last armed). If you believe it is already home, prove it with get_position rather than "
+            "by commanding a return that cannot happen.",
+        )
+
+    # offboard_control("stop"/"status") must work on the ground: stopping and
+    # querying are how a caller recovers from a bad state, and refusing them
+    # would be a usability trap. Only "start" actually commands motion.
+    navigation = tool in NAVIGATION_TOOLS
+    if tool == "offboard_control" and str(args.get("action", "")).lower() != "start":
+        navigation = False
+
+    if navigation and s.require_in_air_for_navigation:
+        if not in_air:
+            return Rejection(
+                "precondition.navigation_requires_airborne",
+                f"{tool} was commanded while the drone is on the ground",
+                "Call takeoff first and wait for it to report the target altitude, then navigate.",
+            )
+        # The takeoff-then-crash timing fix, formalized: a navigation command
+        # issued in the first moments after takeoff can be executed while the
+        # vehicle is still climbing, which historically caused a crash.
+        since_takeoff = state.get("seconds_since_takeoff")
+        if since_takeoff is not None and since_takeoff < s.takeoff_settle_s:
+            return Rejection(
+                "precondition.takeoff_settling",
+                f"{tool} was commanded {since_takeoff:.1f} s after takeoff, inside the "
+                f"{s.takeoff_settle_s:.0f} s settling window",
+                "Wait until takeoff reports its target altitude (or poll get_position) before navigating.",
+            )
+
+    if tool in MISSION_START_TOOLS and state.get("mission_uploaded") is False:
+        return Rejection(
+            "precondition.mission_required",
+            f"{tool} was called but no mission has been uploaded in this session",
+            "Upload a mission first (upload_mission or import_qgc_mission), then start it.",
+        )
+    return None
+
+
+def _offset_to_latlon(lat: float, lon: float, north_m: float, east_m: float) -> tuple[float, float]:
+    """Apply a local NED offset (metres) to a lat/lon."""
+    import math
+
+    dlat = north_m / _M_PER_DEG_LAT
+    dlon = east_m / (_M_PER_DEG_LAT * max(math.cos(math.radians(lat)), 1e-6))
+    return lat + dlat, lon + dlon
+
+
+def resolve_target(
+    tool: str, args: dict, state: dict, s: SafetySettings
+) -> tuple[float | None, float | None, float | None, str | None]:
+    """Resolve a command's horizontal target to (lat, lon, alt_rel, error).
+
+    Handles the three cases the fence previously missed entirely:
+
+    - offsets from the current position (``move_to_relative``,
+      ``offboard_set_position_ned``)
+    - velocities, projected forward over the stale-setpoint window
+    - follow-me target locations
+
+    ``error`` is set when a target *should* be fenced but cannot be resolved
+    (no live position). Callers reject in that case: refusing to move is the
+    safe direction, and silently skipping the fence is what the independent
+    review flagged.
+    """
+    position = state.get("position") or {}
+    cur_lat, cur_lon = position.get("latitude_deg"), position.get("longitude_deg")
+    # Height above the LAUNCH point, which is the frame the fence ceiling is
+    # expressed in. The autopilot's relative reading is the fallback inside
+    # height_above_launch_m, used only when there is no absolute altitude or no
+    # launch elevation to measure against.
+    cur_alt = _current_height_m(state)
+
+    if tool in _TARGET_LOCATION_TOOLS:
+        if str(args.get("action", "")).lower() != "target":
+            return None, None, None, None
+        return _num(args, "latitude_deg"), _num(args, "longitude_deg"), None, None
+
+    if tool in _RELATIVE_TARGET_TOOLS:
+        north, east = _num(args, "north_m"), _num(args, "east_m")
+        down = _num(args, "down_m")
+        if north is None and east is None and down is None:
+            return None, None, None, None
+        if cur_lat is None or cur_lon is None:
+            return None, None, None, "current position unknown"
+        lat, lon = _offset_to_latlon(cur_lat, cur_lon, north or 0.0, east or 0.0)
+        alt = None
+        if down is not None:
+            # move_to_relative: down is relative to the CURRENT altitude.
+            # offboard_set_position_ned: down is relative to the offboard
+            # origin, which the server approximates as the current position.
+            alt = (cur_alt if cur_alt is not None else 0.0) - down
+        return lat, lon, alt, None
+
+    if tool in _VELOCITY_TOOLS:
+        horizon_s = _num(args, "stale_timeout_s") or 15.0
+        if tool == "offboard_set_velocity_ned":
+            north, east = _num(args, "north_m_s") or 0.0, _num(args, "east_m_s") or 0.0
+        else:  # body frame: without heading, treat the magnitude as worst case
+            forward = _num(args, "forward_m_s") or 0.0
+            right = _num(args, "right_m_s") or 0.0
+            magnitude = (forward**2 + right**2) ** 0.5
+            north, east = magnitude, 0.0
+        if north == 0.0 and east == 0.0:
+            return None, None, None, None
+        if cur_lat is None or cur_lon is None:
+            return None, None, None, "current position unknown"
+        lat, lon = _offset_to_latlon(cur_lat, cur_lon, north * horizon_s, east * horizon_s)
+        return lat, lon, None, None
+
+    return None, None, None, None
+
+
+def check_geofence(
+    tool: str, args: dict, fence: Geofence, s: SafetySettings, state: dict | None = None
+) -> Rejection | None:
+    """Server-side fence: single targets, offsets, velocities and whole missions."""
+    if not fence.active:
+        return None
+    state = state or {}
+
+    # S8: a configured radius fence is inert until home is known. Surface that
+    # instead of silently passing every target.
+    if (
+        fence.max_radius_m > 0
+        and fence.home is None
+        and (
+            tool in _POSITION_ARGS
+            or tool in _RELATIVE_TARGET_TOOLS
+            or tool in _VELOCITY_TOOLS
+            or tool in MISSION_UPLOAD_TOOLS
+        )
+    ):
+        return Rejection(
+            "geofence.home_unknown",
+            "a radius geofence is configured but the drone's home position has not been "
+            "read yet, so the fence cannot be enforced",
+            "Wait for a GPS/home fix (get_home_position) and retry. The command was refused "
+            "rather than flown unfenced.",
+        )
+
+    if tool in MISSION_UPLOAD_TOOLS:
+        items = args.get("waypoints") or args.get("mission_points") or []
+        if isinstance(items, list):
+            violations = check_mission(fence, items)
+            if violations:
+                idx, first = violations[0]
+                return Rejection(
+                    f"{first.rule}.mission_item",
+                    f"mission item {idx} violates the geofence: {first.detail} "
+                    f"({len(violations)} of {len(items)} items violate it)",
+                    "Move the offending waypoints inside the geofence and upload again. "
+                    "The whole mission is rejected; nothing was sent to the drone.",
+                )
+
+    lat = lon = None
+    if tool in _POSITION_ARGS:
+        lat_key, lon_key, _, _ = _POSITION_ARGS[tool]
+        lat, lon = _num(args, lat_key), _num(args, lon_key)
+    alt = _relative_altitude(tool, args, state)
+
+    resolved_lat, resolved_lon, resolved_alt, resolve_error = resolve_target(tool, args, state, s)
+    if resolve_error is not None:
+        return Rejection(
+            "geofence.target_unresolvable",
+            f"{tool} commands a target relative to the drone, but {resolve_error}, so the geofence cannot be checked",
+            "Wait for position telemetry (get_position) and retry. The command was refused rather than flown unfenced.",
+        )
+    if resolved_lat is not None:
+        lat, lon = resolved_lat, resolved_lon
+    if resolved_alt is not None:
+        alt = resolved_alt
+
+    if lat is None and lon is None and alt is None:
+        return None
+
+    violation = check_position(fence, lat, lon, alt)
+    if violation is None:
+        return None
+    return Rejection(
+        violation.rule,
+        violation.detail,
+        "Choose a target inside the geofence. Use get_home_position and the configured fence "
+        "to pick a valid point, or ask the operator to widen the fence.",
+    )
+
+
+# --------------------------------------------------------------- rate limiting
+
+
+@dataclass
+class RateLimiter:
+    """Sliding-window limiter, per client and per tier class."""
+
+    calls: dict[str, deque] = field(default_factory=lambda: defaultdict(deque))
+
+    def check(self, client_id: str, critical: bool, s: SafetySettings, now: float | None = None) -> Rejection | None:
+        now = clock.monotonic() if now is None else now
+        limit = s.rate_limit_critical_calls if critical else s.rate_limit_calls
+        window = s.rate_limit_critical_window_s if critical else s.rate_limit_window_s
+        key = f"{client_id}:{'critical' if critical else 'normal'}"
+        bucket = self.calls[key]
+        while bucket and now - bucket[0] > window:
+            bucket.popleft()
+        if len(bucket) >= limit:
+            retry_in = window - (now - bucket[0])
+            return Rejection(
+                "rate_limit.critical" if critical else "rate_limit.normal",
+                f"rate limit exceeded: more than {limit} {'critical ' if critical else ''}calls in {window:.0f}s",
+                f"Wait about {max(retry_in, 1):.0f}s before retrying. If you are polling, "
+                "poll less often or use a monitoring tool that blocks.",
+            )
+        bucket.append(now)
+        return None
+
+    def reset(self) -> None:
+        self.calls.clear()

@@ -9,7 +9,15 @@ A batch file is JSON:
                    "start": "the Lodhi Road gate",   # optional; a landmark or x,y
                    "land": "the east lawn",          # optional; default back at the start
                    "faults": "random",               # none | crane_ahead | storm | ... | random | a path
-                   "wind": "3,0,0"}]}                # optional, m/s
+                   "wind": "3,0,0",                  # optional, m/s
+                   "expect": {...}}]}                # optional: the ground truth the flight is scored on
+
+`expect` is hidden from every planner: it is the mission's intent written by
+hand, in the same shape the intent extractor returns (targets with landmark
+names, views, sides, heights; ordered; avoid), plus `feasible` (false when the
+mission cannot be flown as asked, null when that is not known). The metrics
+ground it in the world and score each flight against it, so intent success
+never depends on the system's own reading of the mission.
 
 `random` draws a schedule from a seed made of the batch seed, the mission id
 and the repeat number, so every condition (and the unconstrained baseline)
@@ -27,6 +35,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
 
+from waypoint.orchestrator.options import CLASSIC, FULL, PRESETS, SystemOptions, system_from
 from waypoint.planner import MissionConstraints, Obstacle, Plan, PlannerOptions
 from waypoint.scenario import constraints_for, load_faults, load_world, pad_at, parse_wind, resolve_point
 from waypoint.sim import FaultEvent, FaultSchedule, FaultType, Trigger, Wind
@@ -34,6 +43,47 @@ from waypoint.world.landing import survey
 from waypoint.world.models import World
 
 RANDOM = "random"
+
+
+class ExpectedTarget(BaseModel):
+    """A target as the ground truth names it: a landmark, or a point relative to the world's origin."""
+
+    landmark: str = ""
+    label: str = ""
+    x: float = 0.0
+    y: float = 0.0
+    action: str = "CAPTURE"
+    views: int = 1
+    sides: list[str] = Field(default_factory=list)
+    overhead: bool = False
+    altitude_agl: float = 0.0
+    max_altitude_agl: float = 0.0
+
+
+class ExpectedAvoid(BaseModel):
+    landmark: str = ""
+    label: str = ""
+    x: float = 0.0
+    y: float = 0.0
+    radius: float = 0.0
+
+
+class Expectation(BaseModel):
+    """What a mission asks for, written by hand: the ground truth a flight is scored against."""
+
+    targets: list[ExpectedTarget] = Field(default_factory=list)
+    ordered: bool = False
+    avoid: list[ExpectedAvoid] = Field(default_factory=list)
+    feasible: bool | None = True
+
+    def payload(self) -> dict:
+        """In the extractor's shape, for `waypoint.intent.ground`."""
+        return {
+            "targets": [{**t.model_dump(), "label": t.label or t.landmark} for t in self.targets],
+            "ordered": self.ordered,
+            "avoid": [{**a.model_dump(), "label": a.label or a.landmark} for a in self.avoid],
+            "notes": "",
+        }
 
 
 class MissionSpec(BaseModel):
@@ -47,6 +97,7 @@ class MissionSpec(BaseModel):
     faults: str = "none"
     wind: str | None = None
     max_altitude: float | None = Field(default=None, gt=0)
+    expect: Expectation | None = None
 
     @field_validator("faults")
     @classmethod
@@ -91,13 +142,50 @@ CONDITIONS: tuple[PlannerOptions, ...] = (
     PlannerOptions(hierarchical=False, violation_feedback=False),
 )
 CONDITION_LABELS = tuple(c.label for c in CONDITIONS)
+#: The systems in their fixed order, for the same reason.
+SYSTEM_LABELS = tuple(PRESETS)
+
+
+@dataclass(frozen=True)
+class Condition:
+    """One way of flying the batch: how the planner is asked, and what the loop around it does."""
+
+    planner: PlannerOptions
+    system: SystemOptions = FULL
+    #: Batches written before systems existed name a condition by its planner alone (and fly classic).
+    legacy: bool = False
+
+    @property
+    def label(self) -> str:
+        return self.planner.label if self.legacy else f"{self.planner.label}|{self.system.label}"
+
+    @classmethod
+    def of(cls, value: "Condition | PlannerOptions") -> "Condition":
+        """A condition, from a condition or from bare planner options (the classic loop, labelled as before)."""
+        return value if isinstance(value, Condition) else cls(value, CLASSIC, legacy=True)
 
 
 def condition_from_label(label: str) -> PlannerOptions:
+    """The planner options of a label ("hierarchical+feedback", with or without "|system")."""
+    planner = label.split("|", 1)[0]
     for condition in CONDITIONS:
-        if condition.label == label:
+        if condition.label == planner:
             return condition
     raise ValueError(f"unknown condition {label!r}; one of {', '.join(CONDITION_LABELS)}")
+
+
+def split_label(label: str) -> tuple[str, str]:
+    """(planner part, system part) of a condition label; labels from before systems are classic."""
+    planner, _, system = label.partition("|")
+    return planner, system or CLASSIC.label
+
+
+def system_of(label: str) -> SystemOptions | None:
+    """The system a condition label names, if it names a known one."""
+    try:
+        return system_from(split_label(label)[1])
+    except ValueError:
+        return None
 
 
 # ---------------------------------------------------------------------------

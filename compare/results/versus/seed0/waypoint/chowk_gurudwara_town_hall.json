@@ -1,0 +1,135 @@
+{
+ "system": "waypoint",
+ "mission_id": "chowk_gurudwara_town_hall",
+ "mission": "photograph Gurudwara Sis Ganj Sahib from two sides and the Town Hall from above, then come back",
+ "world": "chowk",
+ "faults_spec": "random",
+ "seed": 0,
+ "error": null,
+ "faults": [
+  {
+   "type": "WIND_GUST",
+   "trigger": {
+    "time": 35.4,
+    "battery_below": null,
+    "at_waypoint": null,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 4.4,
+   "direction": 169.5,
+   "vertical": 0.0,
+   "duration": 3.1,
+   "obstacle": null,
+   "ahead": null,
+   "name": "gust"
+  },
+  {
+   "type": "GPS_DRIFT",
+   "trigger": {
+    "time": 29.0,
+    "battery_below": null,
+    "at_waypoint": null,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 0.4,
+   "direction": 258.8,
+   "vertical": 0.0,
+   "duration": 20.2,
+   "obstacle": null,
+   "ahead": null,
+   "name": "gps slip"
+  },
+  {
+   "type": "OBSTACLE_APPEARS",
+   "trigger": {
+    "time": null,
+    "battery_below": null,
+    "at_waypoint": 3,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 1.0,
+   "direction": 0.0,
+   "vertical": 0.0,
+   "duration": null,
+   "obstacle": {
+    "x": 0.0,
+    "y": 0.0,
+    "radius": 7.5,
+    "height": 62.6,
+    "name": "unmapped obstacle"
+   },
+   "ahead": 30.0,
+   "name": "obstacle spotted"
+  }
+ ],
+ "usage": {
+  "openai:gpt-5-nano": {
+   "calls": 2,
+   "input": 3835,
+   "cached": 1152,
+   "output": 2998,
+   "reasoning": 2624
+  }
+ },
+ "detail": {
+  "outcome": "completed",
+  "inflight_replans": 1,
+  "log_events": {
+   "execution_resumed": 1,
+   "execution_started": 1,
+   "intent": 1,
+   "mission_finished": 1,
+   "mission_started": 1,
+   "perception": 1,
+   "plan_proposed": 3,
+   "repair": 2,
+   "replan_triggered": 1,
+   "verification": 3
+  },
+  "wall_s": 20.1
+ },
+ "grade": {
+  "flew": true,
+  "landed": true,
+  "crashed": false,
+  "battery_depleted": false,
+  "keep_out_breaches": 0,
+  "left_geofence": false,
+  "seconds_outside_geofence": 0.0,
+  "above_ceiling": false,
+  "max_altitude_m": 40.1,
+  "distance_m": 314.9,
+  "flight_s": 95.8,
+  "battery_left_pct": 90.5,
+  "expected_feasible": true,
+  "accomplished": true,
+  "refused": null,
+  "share_done": 1.0,
+  "targets": [
+   {
+    "name": "Gurudwara Sis Ganj Sahib",
+    "action": "CAPTURE",
+    "required_views": 2,
+    "views": 2,
+    "missing_sides": [],
+    "served": true,
+    "score": 1.0
+   },
+   {
+    "name": "the Town Hall",
+    "action": "CAPTURE",
+    "required_views": 1,
+    "views": 1,
+    "missing_sides": [],
+    "served": true,
+    "score": 1.0
+   }
+  ],
+  "why_not": null,
+  "touchdown_error_m": 8.07
+ },
+ "outcome": "completed"
+}

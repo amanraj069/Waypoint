@@ -1,0 +1,1742 @@
+{
+ "arm_drone": {
+  "module": "action",
+  "params": [
+   {
+    "name": "force",
+    "annotation": "bool",
+    "required": false,
+    "default": "False"
+   }
+  ],
+  "doc": "Arm the drone, and confirm from telemetry that it actually armed.\n\nReports success only when the AUTOPILOT says the vehicle is armed. A\ncommand the autopilot accepted and then did not act on is reported as a\nfailure, with what the telemetry said.\n\nArgs:\n    force (bool): if True, force-arm WITHOUT prearm safety checks\n        (DANGEROUS - bypasses sensor/EKF checks; use only when you\n        understand why the checks fail). Default False."
+ },
+ "move_to_relative": {
+  "module": "action",
+  "params": [
+   {
+    "name": "north_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "east_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "down_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "yaw_deg",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   }
+  ],
+  "doc": "Move the drone relative to the current position using ArduPilot's GUIDED mode.\n\nIMPORTANT: This function RETURNS IMMEDIATELY, as soon as the command has been\naccepted. It does NOT wait for the drone to arrive. When it returns, the drone\nhas barely started moving and is still in flight toward the target.\n\nTo find out when the drone has actually arrived, poll check_arrival() with the\ntarget coordinates until it reports \"arrived\", or use monitor_flight(). Do not\nissue the next navigation command - and in particular do not command a landing\nor a return-to-launch - until arrival has been confirmed, or the drone will\nabandon this move part-way through.\n\n(Contrast takeoff(), which by default DOES block until the target altitude is\nreached.)\n\nArduPilot automatically enters GUIDED mode when receiving goto_location commands\n(as long as the drone is armed). No manual mode switching required.\n\nThe drone must be armed and in the air. Waits for a drone CONNECTION if one is\nnot yet established - that wait is about the link, not about the flight.\n\nArgs:\n    ctx (Context): the context.\n    north_m (float): distance in meters to move north (negative for south).\n    east_m (float): distance in meters to move east (negative for west).\n    down_m (float): distance in meters to move down (negative for up). Note: negative values = climb.\n    yaw_deg (float): target yaw angle in degrees. Default is 0.0 (no yaw change).\n\nReturns:\n    dict: Status message with success or error."
+ },
+ "takeoff": {
+  "module": "action",
+  "params": [
+   {
+    "name": "takeoff_altitude",
+    "annotation": "float",
+    "required": false,
+    "default": "3.0"
+   },
+   {
+    "name": "wait_for_altitude",
+    "annotation": "bool",
+    "required": false,
+    "default": "True"
+   }
+  ],
+  "doc": "Command the drone to initiate takeoff and ascend to a specified altitude.\nThe drone must be armed. Waits for connection if not ready.\n\nIMPORTANT: By default, this function waits until the drone reaches the target\naltitude before returning. This prevents unsafe conditions where subsequent\nnavigation commands are sent while the drone is still climbing.\n\nArgs:\n    ctx (Context): The context of the request.\n    takeoff_altitude (float): The altitude to ascend to after takeoff. Default is 3.0 meters.\n    wait_for_altitude (bool): If True (default), waits until drone reaches target altitude.\n                              Set to False only if you need immediate return and will\n                              monitor altitude manually before sending navigation commands.\n\nReturns:\n    dict: Status message with success or error, including final altitude reached."
+ },
+ "land": {
+  "module": "action",
+  "params": [
+   {
+    "name": "force",
+    "annotation": "bool",
+    "required": false,
+    "default": "False"
+   }
+  ],
+  "doc": "Command the drone to initiate landing at its current location.\n\nLANDING GATE SAFETY: If there's a pending navigation destination (from go_to_location),\nthis will check if the drone has arrived before allowing landing. This prevents\naccidentally landing far from the intended destination.\n\nUse force=True to override the landing gate (emergency use only).\n\nOn an aircraft that is already on the ground with its motors disarmed this\nreturns ``status: \"no_action\"`` rather than \"Landing initiated\": there is no\nlanding to initiate, and reporting one would be a false tool result. Unlike\nreturn_to_launch this is never refused - land is the abort path, and an\nabort path that can be rejected is not one.\n\nArgs:\n    ctx (Context): The context of the request.\n    force (bool): If True, bypass landing gate safety check (default: False).\n\nReturns:\n    dict: Status message with success, no_action, blocked, or error."
+ },
+ "set_flight_mode": {
+  "module": "action",
+  "params": [
+   {
+    "name": "mode",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "Set the flight mode of the drone.\n\nAvailable modes:\n- HOLD: Hold current position (requires GPS)\n- RTL: Return to launch/home position\n- LAND: Land at current position\n- GUIDED: Manual waypoint control (used by go_to_location)\n\nNote: Some modes like AUTO require an active mission.\nFor GUIDED mode navigation, use go_to_location instead.\n\nArgs:\n    ctx (Context): The context of the request.\n    mode (str): The flight mode to set (HOLD, RTL, LAND, GUIDED).\n\nReturns:\n    dict: Status message with the new flight mode or error."
+ },
+ "disarm_drone": {
+  "module": "action",
+  "params": [],
+  "doc": "Disarm the drone motors. This stops the motors from spinning.\nSAFETY: Only use when drone is on the ground!\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n\nReturns:\n    dict: Status message with success or error."
+ },
+ "return_to_launch": {
+  "module": "action",
+  "params": [],
+  "doc": "Command the drone to return to its launch/home position (RTL mode).\nThis is the primary emergency/safety feature.\nThe drone will fly back to home and land automatically.\nWaits for connection if not ready.\n\nHOME IS NOT NECESSARILY YOUR LAUNCH POINT. The autopilot moves its home to\nwherever the aircraft last armed, so an aircraft that armed at a destination\nwill \"return\" to that destination. The answer names the coordinate this RTL\nwill actually fly to, and warns when it differs from where this session\nstarted.\n\nA return commanded to an aircraft that is on the ground with its motors\ndisarmed is refused by the safety layer (``precondition.rtl_requires_airborne``):\nit would fly nothing, and reporting a return that cannot happen is how eight\nT6 trials came to claim a completed return from 1.2 km away.\n\nArgs:\n    ctx (Context): The context of the request.\n\nReturns:\n    dict: Status message with success or error, plus the destination this\n        return will fly to and any home/launch-point disagreement."
+ },
+ "kill_motors": {
+  "module": "action",
+  "params": [],
+  "doc": "EMERGENCY ONLY: Immediately cut power to all motors.\n\u26a0\ufe0f  WARNING: This will cause the drone to fall from the sky!\n\u26a0\ufe0f  Only use in critical emergencies (fire, collision imminent, etc.)\n\u26a0\ufe0f  Drone may be damaged from the fall!\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n\nReturns:\n    dict: Status message with success or error."
+ },
+ "hold_position": {
+  "module": "action",
+  "params": [],
+  "doc": "Command the drone to hold its current position while staying in GUIDED mode.\nUseful for pausing during flight to assess situation or wait.\nWaits for connection if not ready.\n\nNote: This uses goto_location with current position instead of hold() to avoid\n      switching to LOITER mode which can cause unwanted altitude changes.\n\nArgs:\n    ctx (Context): The context of the request.\n\nReturns:\n    dict: Status message with success or error including current position."
+ },
+ "go_to_location": {
+  "module": "action",
+  "params": [
+   {
+    "name": "latitude_deg",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "longitude_deg",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "absolute_altitude_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "yaw_deg",
+    "annotation": "float",
+    "required": false,
+    "default": "float('nan')"
+   }
+  ],
+  "doc": "Fly to an absolute GPS location. Returns immediately - drone flies autonomously.\n\nAFTER CALLING THIS, YOU MUST:\n1. Call monitor_flight() repeatedly\n2. PRINT the DISPLAY_TO_USER value to the user after each monitor_flight() call\n3. When status is \"arrived\", call land()\n4. Continue calling monitor_flight() until mission_complete is true\n\nThis gives the user real-time updates on flight progress (distance, speed, ETA).\n\nArgs:\n    ctx (Context): The context of the request.\n    latitude_deg (float): Target latitude in degrees (-90 to +90).\n    longitude_deg (float): Target longitude in degrees (-180 to +180).\n    absolute_altitude_m (float): Target altitude in meters MSL.\n    yaw_deg (float): Target heading in degrees (optional).\n\nReturns:\n    dict: Navigation started. Next: call monitor_flight() and show updates to user."
+ },
+ "check_arrival": {
+  "module": "action",
+  "params": [
+   {
+    "name": "latitude_deg",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "longitude_deg",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "threshold_m",
+    "annotation": "float",
+    "required": false,
+    "default": "10.0"
+   }
+  ],
+  "doc": "Check if the drone has arrived at a target GPS location (instant, non-blocking).\n\nIMPORTANT: Call this AFTER go_to_location or reposition commands.\nThis returns immediately with current distance - it does NOT wait.\n\nIf status is \"in_progress\", call this again after a few seconds.\nIf status is \"arrived\", the drone is within threshold of target - safe to land.\n\nArgs:\n    ctx (Context): The context of the request.\n    latitude_deg (float): Target latitude in degrees (-90 to +90).\n    longitude_deg (float): Target longitude in degrees (-180 to +180).\n    threshold_m (float): Distance threshold in meters to consider \"arrived\" (default: 10.0m).\n\nReturns:\n    dict: Status with \"arrived\" (within threshold) or \"in_progress\" (still flying)."
+ },
+ "monitor_flight": {
+  "module": "action",
+  "params": [
+   {
+    "name": "arrival_threshold_m",
+    "annotation": "float",
+    "required": false,
+    "default": "20.0"
+   },
+   {
+    "name": "auto_land",
+    "annotation": "bool",
+    "required": false,
+    "default": "True"
+   }
+  ],
+  "doc": "Monitor flight progress. YOU MUST CALL THIS IN A LOOP UNTIL mission_complete IS TRUE.\n\n\u26a0\ufe0f CRITICAL: If mission_complete is false, you MUST call monitor_flight() again!\nStopping early leaves the drone flying unattended - DANGEROUS!\n\nREQUIRED LOOP:\nwhile True:\n    result = monitor_flight()\n    print(result[\"DISPLAY_TO_USER\"])  # Show user the progress\n    if result[\"mission_complete\"]:\n        break  # Only stop when mission_complete is true\n\nLanding is automatic when the drone arrives (auto_land=True by default).\n\nWHAT mission_complete MEANS. It means the flight this tool was watching has\nended with the aircraft on the ground where it was sent. It is NOT a verdict\non your task: a task with two legs is not finished when the first leg is.\n\nTwo ways it stays false on a landed aircraft:\n\n- `status: \"not_started\"` - the drone is on the ground and has NOT been\n  airborne, so there is no flight to monitor. Do not keep polling; get it\n  airborne first.\n- `status: \"landed_away_from_target\"` - the aircraft is on the ground, but\n  not at the place it was last told to fly to. The field\n  `landed_away_from_target` names the distance. The commanded flight did\n  not happen, or did not finish.\n\nEvery answer, in every phase, carries the live position, altitude, vertical\nspeed, distance to the current target and distance from this session's\nlaunch point. Read those rather than the status word.\n\nArgs:\n    ctx (Context): The context of the request.\n    arrival_threshold_m (float): Distance to consider \"arrived\" (default: 20m).\n    auto_land (bool): Automatically land when arrived (default: True).\n\nReturns:\n    dict: DISPLAY_TO_USER (print this!), status, mission_complete (ONLY stop when true)."
+ },
+ "set_max_speed": {
+  "module": "action",
+  "params": [
+   {
+    "name": "speed_m_s",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "Set the maximum speed limit for the drone.\nUseful for safety or when flying in confined areas.\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n    speed_m_s (float): Maximum speed in meters per second. Typical range: 1-20 m/s.\n\nReturns:\n    dict: Status message with success or error."
+ },
+ "set_yaw": {
+  "module": "action",
+  "params": [
+   {
+    "name": "yaw_deg",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "yaw_rate_deg_s",
+    "annotation": "float",
+    "required": false,
+    "default": "30.0"
+   }
+  ],
+  "doc": "Set the drone's heading (yaw) without changing position.\nRotates the drone to face a specific direction.\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n    yaw_deg (float): Target heading in degrees (0-360, where 0/360 is North).\n    yaw_rate_deg_s (float): Rotation speed in degrees per second (default: 30).\n\nReturns:\n    dict: Status message with target heading.\n\nExamples:\n    - set_yaw(0) - Face North\n    - set_yaw(90) - Face East\n    - set_yaw(180) - Face South\n    - set_yaw(270) - Face West\n    - set_yaw(45, 15) - Face Northeast at 15 deg/s rotation speed\n\nNote:\n    - 0\u00b0 = North, 90\u00b0 = East, 180\u00b0 = South, 270\u00b0 = West\n    - Drone will rotate in place to face the specified direction\n    - Implementation: Uses goto_location with current position + new yaw\n      (MAVSDK doesn't have a dedicated \"yaw only\" command)"
+ },
+ "reposition": {
+  "module": "action",
+  "params": [
+   {
+    "name": "latitude_deg",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "longitude_deg",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "altitude_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "Move to a new location and loiter (hover) there.\nCombination of goto_location and hold_position.\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n    latitude_deg (float): Target latitude in degrees.\n    longitude_deg (float): Target longitude in degrees.\n    altitude_m (float): Target altitude above sea level in meters.\n\nReturns:\n    dict: Status message with target position.\n\nExamples:\n    - reposition(33.645, -117.842, 50) - Move to coordinates and hover at 50m\n    - reposition(33.646, -117.843, 100) - Reposition to new survey point\n\nUse Cases:\n    - Adjusting survey position\n    - Moving to better vantage point\n    - Relocating between tasks"
+ },
+ "do_orbit": {
+  "module": "action",
+  "params": [
+   {
+    "name": "radius_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "velocity_m_s",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "latitude_deg",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "longitude_deg",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "absolute_altitude_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "yaw_behavior",
+    "annotation": "str",
+    "required": false,
+    "default": "'front_to_center'"
+   }
+  ],
+  "doc": "Command the drone to orbit around a point (MAV_CMD_DO_ORBIT).\n\nFIRMWARE NOTE: ArduCopter rejects this with UNSUPPORTED (observed on\n4.5.7 SITL) - it has no DO_ORBIT handler. PX4 supports it. For an\nArduPilot-compatible orbit, use offboard_set_velocity_body with a yaw\nrate instead.\n\nArgs:\n    radius_m (float): orbit radius in meters (>0).\n    velocity_m_s (float): tangential speed (m/s, max 20).\n    latitude_deg, longitude_deg (float): center of the orbit.\n    absolute_altitude_m (float): orbit altitude AMSL.\n    yaw_behavior (str): \"front_to_center\", \"hold_initial\", \"uncontrolled\",\n        \"front_tangent\", or \"rc_controlled\".\n\nReturns:\n    dict: status."
+ },
+ "vehicle_power": {
+  "module": "action",
+  "params": [
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "confirm",
+    "annotation": "bool",
+    "required": false,
+    "default": "False"
+   }
+  ],
+  "doc": "CRITICAL: reboot, shut down, or TERMINATE the autopilot.\n\n- \"reboot\": restart the autopilot (drops the link briefly; verified\n  working on ArduPilot SITL).\n- \"shutdown\": power down the autopilot (UNSUPPORTED on ArduPilot -\n  observed).\n- \"terminate\": FLIGHT TERMINATION - motors stop IMMEDIATELY, the drone\n  falls. Ultimate emergency stop only.\n\nAll actions require confirm=True (refused otherwise). Never use on an\narmed/flying vehicle except terminate in a genuine emergency.\n\nArgs:\n    action (str): \"reboot\", \"shutdown\", or \"terminate\".\n    confirm (bool): must be True to execute.\n\nReturns:\n    dict: status."
+ },
+ "set_actuator": {
+  "module": "action",
+  "params": [
+   {
+    "name": "index",
+    "annotation": "int",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "value",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "EXPERT: directly set an actuator/servo output (MAV_CMD_DO_SET_ACTUATOR).\n\nArgs:\n    index (int): actuator output index (1-16).\n    value (float): normalized output in [-1, 1].\n\nReturns:\n    dict: status."
+ },
+ "flight_altitudes": {
+  "module": "action",
+  "params": [
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "altitude_m",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   }
+  ],
+  "doc": "Get/set the default takeoff altitude and the return-to-launch altitude.\n\nFIRMWARE NOTE: the RTL altitude actions use the PX4 parameter\n(RTL_RETURN_ALT) - on ArduPilot they fail with PARAMETER_ERROR\n(observed); use set_parameter(\"RTL_ALT\", centimeters) there instead.\n\nArgs:\n    action (str): \"get_takeoff\", \"set_takeoff\", \"get_rtl\", or \"set_rtl\".\n    altitude_m (float): altitude in meters for the set actions (1-500).\n\nReturns:\n    dict: status (+ altitude_m for the get actions)."
+ },
+ "vtol_transition": {
+  "module": "action",
+  "params": [
+   {
+    "name": "to",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "Transition a VTOL vehicle between fixedwing and multicopter flight.\n\nFIRMWARE NOTE: pure multicopters reject this with UNSUPPORTED (observed\non ArduCopter SITL) - it only applies to VTOL airframes.\n\nArgs:\n    to (str): \"fixedwing\" or \"multicopter\".\n\nReturns:\n    dict: status."
+ },
+ "list_cameras": {
+  "module": "camera",
+  "params": [],
+  "doc": "List cameras detected on the drone (MAVLink camera protocol).\n\nReturns each camera's component_id (needed by all other camera tools),\nvendor/model, and resolution. An empty list means no camera announced\nitself (plain SITL has no camera backend).\n\nReturns:\n    dict: status + cameras list."
+ },
+ "camera_capture": {
+  "module": "camera",
+  "params": [
+   {
+    "name": "component_id",
+    "annotation": "int",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "interval_s",
+    "annotation": "float",
+    "required": false,
+    "default": "1.0"
+   },
+   {
+    "name": "stream_id",
+    "annotation": "int",
+    "required": false,
+    "default": "0"
+   }
+  ],
+  "doc": "Photo/video capture and video streaming control for a camera.\n\nArgs:\n    component_id (int): camera component id from list_cameras.\n    action (str): one of \"take_photo\", \"start_photo_interval\",\n        \"stop_photo_interval\", \"start_video\", \"stop_video\",\n        \"start_video_streaming\", \"stop_video_streaming\",\n        \"video_stream_info\", \"last_capture_info\".\n    interval_s (float): seconds between photos for start_photo_interval.\n    stream_id (int): video stream id for the streaming actions.\n\nReturns:\n    dict: status (+ info payloads for the info actions)."
+ },
+ "camera_settings": {
+  "module": "camera",
+  "params": [
+   {
+    "name": "component_id",
+    "annotation": "int",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "mode",
+    "annotation": "str",
+    "required": false,
+    "default": "''"
+   },
+   {
+    "name": "setting_id",
+    "annotation": "str",
+    "required": false,
+    "default": "''"
+   },
+   {
+    "name": "option_id",
+    "annotation": "str",
+    "required": false,
+    "default": "''"
+   }
+  ],
+  "doc": "Get/set camera mode and settings.\n\nArgs:\n    component_id (int): camera component id from list_cameras.\n    action (str): \"get_mode\", \"set_mode\", \"list_settings\" (current values),\n        \"list_options\" (possible settings + options), \"get_setting\",\n        \"set_setting\", or \"reset\" (factory reset).\n    mode (str): for set_mode: \"photo\" or \"video\".\n    setting_id (str): for get_setting/set_setting.\n    option_id (str): for set_setting.\n\nReturns:\n    dict: status + requested data."
+ },
+ "camera_storage": {
+  "module": "camera",
+  "params": [
+   {
+    "name": "component_id",
+    "annotation": "int",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "storage_id",
+    "annotation": "int",
+    "required": false,
+    "default": "0"
+   },
+   {
+    "name": "photos_range",
+    "annotation": "str",
+    "required": false,
+    "default": "'since_connection'"
+   }
+  ],
+  "doc": "Camera storage status, formatting, and photo listing.\n\nArgs:\n    component_id (int): camera component id from list_cameras.\n    action (str): \"status\", \"format\" (DESTRUCTIVE - erases the storage),\n        or \"list_photos\".\n    storage_id (int): storage id for \"format\".\n    photos_range (str): \"all\" or \"since_connection\" for \"list_photos\".\n\nReturns:\n    dict: status + requested data."
+ },
+ "camera_zoom_focus": {
+  "module": "camera",
+  "params": [
+   {
+    "name": "component_id",
+    "annotation": "int",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "control",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "value",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   }
+  ],
+  "doc": "Continuous zoom/focus control for a camera.\n\nArgs:\n    component_id (int): camera component id from list_cameras.\n    control (str): \"zoom\" or \"focus\".\n    action (str): \"in_start\" (start moving in/tele), \"out_start\" (start\n        moving out/wide), \"stop\", or \"range\" (jump to `value`: zoom factor\n        for zoom, 0..100 % for focus).\n    value (float): target for action=\"range\".\n\nReturns:\n    dict: status."
+ },
+ "camera_tracking": {
+  "module": "camera",
+  "params": [
+   {
+    "name": "component_id",
+    "annotation": "int",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "point_x",
+    "annotation": "float",
+    "required": false,
+    "default": "0.5"
+   },
+   {
+    "name": "point_y",
+    "annotation": "float",
+    "required": false,
+    "default": "0.5"
+   },
+   {
+    "name": "radius",
+    "annotation": "float",
+    "required": false,
+    "default": "0.1"
+   },
+   {
+    "name": "top_left_x",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "top_left_y",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "bottom_right_x",
+    "annotation": "float",
+    "required": false,
+    "default": "1.0"
+   },
+   {
+    "name": "bottom_right_y",
+    "annotation": "float",
+    "required": false,
+    "default": "1.0"
+   }
+  ],
+  "doc": "Onboard visual tracking control (cameras supporting MAVLink tracking).\n\nCoordinates are normalized image coordinates: 0..1, origin top-left.\n\nArgs:\n    component_id (int): camera component id from list_cameras.\n    action (str): \"track_point\", \"track_rectangle\", or \"stop\".\n    point_x, point_y, radius (float): for track_point.\n    top_left_x, top_left_y, bottom_right_x, bottom_right_y (float): for\n        track_rectangle.\n\nReturns:\n    dict: status."
+ },
+ "emergency_stop": {
+  "module": "emergency",
+  "params": [
+   {
+    "name": "mode",
+    "annotation": "str",
+    "required": false,
+    "default": "'land'"
+   }
+  ],
+  "doc": "EMERGENCY: stop the current operation immediately.\n\nChoose the least destructive mode that resolves the situation:\n\n- ``land`` (DEFAULT, SAFEST): stop offboard control and land where the\n  drone is now. Use for \"stop!\", \"abort\", \"something is wrong\".\n- ``rtl``: stop and fly home, then land. Use when the area below is\n  unsafe to land in but the vehicle is still healthy.\n- ``kill``: CUT MOTORS INSTANTLY. **The drone falls out of the sky and\n  will likely be destroyed.** Only for a genuine emergency where a\n  falling drone is safer than a flying one (e.g. flyaway toward people).\n\nThe ``land`` and ``rtl`` recovery modes are exempt from the confirmation\nround-trip so they always work in an emergency. ``kill`` cuts the motors and\nis gated exactly like ``kill_motors``: call it once without a token to get a\nsingle-use token plus this consequence, then repeat with that token to\nexecute. This tool does NOT replace the out-of-band chain (RC takeover / GCS\n/ kill switch) - see docs/estop.md.\n\nArgs:\n    mode (str): \"land\" (default), \"rtl\", or \"kill\".\n\nReturns:\n    dict: status and the actions taken."
+ },
+ "autopilot_files": {
+  "module": "filesystem",
+  "params": [
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "path",
+    "annotation": "str",
+    "required": false,
+    "default": "''"
+   },
+   {
+    "name": "to_path",
+    "annotation": "str",
+    "required": false,
+    "default": "''"
+   },
+   {
+    "name": "local_dir",
+    "annotation": "str",
+    "required": false,
+    "default": "''"
+   }
+  ],
+  "doc": "Browse and manage files on the autopilot over MAVLink FTP.\n\nFIRMWARE NOTE: PX4 exposes a filesystem over MAVLink FTP; ArduPilot's\nsupport is limited and MavSDK often returns PROTOCOL_ERROR (observed on\n4.5.7 SITL). Errors are surfaced honestly.\n\nArgs:\n    action (str): \"list\" (path), \"mkdir\" (path), \"rmdir\" (path),\n        \"remove\" (path = file), \"rename\" (path -> to_path), \"download\"\n        (remote path -> local_dir), \"upload\" (local file `path` ->\n        remote dir `to_path`), \"compare\" (are local `path` and remote\n        `to_path` identical?), or \"set_component\" (path = numeric MAVLink\n        component id).\n    path (str): remote path (or local path for upload/compare, or\n        component id for set_component).\n    to_path (str): destination remote path for \"rename\"/\"upload\"/\"compare\".\n    local_dir (str): local destination directory for \"download\".\n\nReturns:\n    dict: status (+ listing for \"list\", identical flag for \"compare\")."
+ },
+ "autopilot_shell": {
+  "module": "filesystem",
+  "params": [
+   {
+    "name": "command",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "confirm",
+    "annotation": "bool",
+    "required": false,
+    "default": "False"
+   },
+   {
+    "name": "read_timeout_s",
+    "annotation": "float",
+    "required": false,
+    "default": "3.0"
+   }
+  ],
+  "doc": "\u26a0\ufe0f TIER-CRITICAL: run a command on the autopilot's system shell and\nreturn its output.\n\nThis is powerful and dangerous (arbitrary autopilot console access) and\nrequires confirm=True. Intended for the PX4 NSH shell; ArduPilot does not\nexpose a MAVLink shell, so ``receive`` times out there (observed).\n\nArgs:\n    command (str): shell command line (a trailing newline is added).\n    confirm (bool): must be True to execute.\n    read_timeout_s (float): how long to collect output (0.5-15).\n\nReturns:\n    dict: status + captured output lines."
+ },
+ "upload_geofence": {
+  "module": "geofence",
+  "params": [
+   {
+    "name": "polygons",
+    "annotation": "list | None",
+    "required": false,
+    "default": "None"
+   },
+   {
+    "name": "circles",
+    "annotation": "list | None",
+    "required": false,
+    "default": "None"
+   }
+  ],
+  "doc": "Upload a geofence (polygons and/or circles) to the drone.\n\nThe fence is stored on the autopilot. NOTE for ArduPilot: uploading does\nnot by itself enforce the fence - set the FENCE_ENABLE parameter to 1\n(see set_parameter) and configure FENCE_ACTION for the desired response.\n\nArgs:\n    polygons (list): list of {\"points\": [{\"latitude_deg\": float,\n        \"longitude_deg\": float}, ...] (at least 3), \"fence_type\":\n        \"inclusion\" | \"exclusion\"}. Inclusion = stay inside; exclusion =\n        keep out.\n    circles (list): list of {\"latitude_deg\": float, \"longitude_deg\": float,\n        \"radius_m\": float, \"fence_type\": \"inclusion\" | \"exclusion\"}.\n\nReturns:\n    dict: status, plus counts of uploaded polygons/circles."
+ },
+ "clear_geofence": {
+  "module": "geofence",
+  "params": [],
+  "doc": "Remove all geofence polygons/circles stored on the drone.\n\nSafety note: after clearing, the vehicle has no fence-based containment.\n\nReturns:\n    dict: status."
+ },
+ "list_gimbals": {
+  "module": "gimbal",
+  "params": [],
+  "doc": "List gimbals detected on the drone.\n\nReturns each gimbal's gimbal_id (needed by the other gimbal tools) and\nvendor/model. An empty list means no gimbal/mount is configured.\n\nReturns:\n    dict: status + gimbals list."
+ },
+ "gimbal_control": {
+  "module": "gimbal",
+  "params": [
+   {
+    "name": "gimbal_id",
+    "annotation": "int",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "Take/release control of a gimbal, or query who controls it.\n\nTake control before pointing the gimbal; release when done so other\ncomponents (e.g. the RC) can use it.\n\nArgs:\n    gimbal_id (int): gimbal id from list_gimbals.\n    action (str): \"take\" (become primary controller), \"release\", or\n        \"status\" (read-only: current controllers).\n\nReturns:\n    dict: status (+ control_status for \"status\")."
+ },
+ "gimbal_point": {
+  "module": "gimbal",
+  "params": [
+   {
+    "name": "gimbal_id",
+    "annotation": "int",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "roll",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "pitch",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "yaw",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "latitude_deg",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "longitude_deg",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "altitude_m",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "gimbal_mode",
+    "annotation": "str",
+    "required": false,
+    "default": "'yaw_follow'"
+   }
+  ],
+  "doc": "Point a gimbal: set angles, set angular rates, track a ground location\n(ROI), or read the current attitude.\n\nTake control first (gimbal_control \"take\"). Pitch -90 looks straight\ndown; 0 is level.\n\nArgs:\n    gimbal_id (int): gimbal id from list_gimbals.\n    action (str): \"set_angles\" (roll/pitch/yaw in deg),\n        \"set_rates\" (roll/pitch/yaw in deg/s),\n        \"roi_location\" (latitude_deg/longitude_deg/altitude_m AMSL -\n        gimbal keeps pointing at that spot), or\n        \"get_attitude\" (read-only).\n    roll, pitch, yaw (float): angles (deg) or rates (deg/s) per action.\n    latitude_deg, longitude_deg, altitude_m (float): for roi_location.\n    gimbal_mode (str): \"yaw_follow\" (yaw relative to vehicle heading,\n        default) or \"yaw_lock\" (yaw fixed in earth frame).\n\nReturns:\n    dict: status (+ attitude for \"get_attitude\")."
+ },
+ "flight_logs": {
+  "module": "logs",
+  "params": [
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "log_id",
+    "annotation": "int",
+    "required": false,
+    "default": "-1"
+   }
+  ],
+  "doc": "List, download, or erase flight logs stored on the drone\n(autopilot dataflash logs, downloaded over MAVLink).\n\nDownloads are saved server-side (FLIGHT_LOG_DIR/downloads/) and the path\nis returned - log binaries are far too large to inline in a chat.\n\nNOTE: with the current MavSDK version this works against PX4; ArduPilot\nresponds correctly at the MAVLink level but MavSDK misreads its log ids\n(see docs/firmware_notes.csv).\n\nArgs:\n    action (str): \"list\" (entries with id/date/size), \"download\"\n        (requires log_id from \"list\"), or \"erase_all\" (DESTRUCTIVE:\n        deletes all logs on the drone).\n    log_id (int): id of the log entry to download.\n\nReturns:\n    dict: status; list returns entries; download returns the saved path\n    and size."
+ },
+ "start_managed_mission": {
+  "module": "managed_mission",
+  "params": [
+   {
+    "name": "waypoints",
+    "annotation": "list",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "takeoff_altitude_m",
+    "annotation": "float",
+    "required": false,
+    "default": "20.0"
+   },
+   {
+    "name": "return_to_launch",
+    "annotation": "bool",
+    "required": false,
+    "default": "True"
+   }
+  ],
+  "doc": "Submit a mission for the SERVER to fly and monitor autonomously.\n\nReturns immediately with a mission_id - it does NOT block for the flight.\n**You may disconnect entirely and reconnect later**; the mission keeps\nrunning and the server keeps monitoring it, applying auto-actions (low\nbattery, geofence breach, link loss) without you. Poll progress with\nget_mission_status, and steer with control_managed_mission.\n\nThe server uploads a takeoff item, your waypoints, and (optionally) an RTL\nitem, then arms and starts the mission. The whole mission is validated\nagainst the server-side geofence BEFORE anything is uploaded.\n\nArgs:\n    waypoints (list): [{\"latitude_deg\": float, \"longitude_deg\": float,\n        \"altitude_m\": float (above home), \"hold_s\": float (optional\n        loiter time at the waypoint)}], in order.\n    takeoff_altitude_m (float): altitude for the initial takeoff item.\n    return_to_launch (bool): append an RTL item after the last waypoint\n        (default True).\n\nReturns:\n    dict: status, mission_id, and the initial phase."
+ },
+ "get_mission_status": {
+  "module": "managed_mission",
+  "params": [
+   {
+    "name": "include_events",
+    "annotation": "bool",
+    "required": false,
+    "default": "True"
+   },
+   {
+    "name": "event_limit",
+    "annotation": "int",
+    "required": false,
+    "default": "20"
+   }
+  ],
+  "doc": "Get the current managed mission's full status and event history.\n\nSafe to call at any time, including after reconnecting to a mission that\nwas submitted in an earlier session (or before a server restart).\n\nArgs:\n    include_events (bool): include the event history (default True).\n    event_limit (int): how many of the most recent events to return\n        (1-200, default 20).\n\nReturns:\n    dict: phase, progress, position, battery, flight mode, elapsed time,\n    auto-actions fired, configured auto-actions, and recent events."
+ },
+ "control_managed_mission": {
+  "module": "managed_mission",
+  "params": [
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "Steer the running managed mission.\n\nArgs:\n    action (str): \"pause\" (hold position, mission keeps its place),\n        \"resume\" (continue a paused mission), \"abort\" (stop the mission and\n        land where the drone is), or \"clear\" (forget a FINISHED mission's\n        record so a new one can be submitted).\n\nReturns:\n    dict: status and the resulting phase."
+ },
+ "print_mission_progress": {
+  "module": "mission",
+  "params": [],
+  "doc": "Print and return the current mission progress of the drone. Waits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n\nReturns:\n    dict: A dictionary containing the current and total mission progress or error status."
+ },
+ "initiate_mission": {
+  "module": "mission",
+  "params": [
+   {
+    "name": "mission_points",
+    "annotation": "list",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "return_to_launch",
+    "annotation": "bool",
+    "required": false,
+    "default": "True"
+   }
+  ],
+  "doc": "Initiate a mission with a list of mission points. The drone must be armed. Waits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n    mission_points (list): A list of dictionaries representing mission points. Each dictionary must include:\n        - latitude_deg (float): Latitude in degrees (range: -90 to +90).\n        - longitude_deg (float): Longitude in degrees (range: -180 to +180).\n        - relative_altitude_m (float): Altitude relative to the takeoff altitude in meters.\n        - speed_m_s (float): Speed in meters per second.\n        - is_fly_through (bool): Whether to fly through the point or stop.\n        - gimbal_pitch_deg (float): Gimbal pitch angle in degrees (optional).\n        - gimbal_yaw_deg (float): Gimbal yaw angle in degrees (optional).\n        - camera_action (MissionItem.CameraAction): Camera action at the point (optional).\n        - loiter_time_s (float): Loiter time in seconds (optional).\n        - camera_photo_interval_s (float): Camera photo interval in seconds (optional).\n        - acceptance_radius_m (float): Acceptance radius in meters (optional).\n        - yaw_deg (float): Yaw angle in degrees (optional).\n        - camera_photo_distance_m (float): Camera photo distance in meters (optional).\n        - vehicle_action (MissionItem.VehicleAction): Vehicle action at the point (optional).\n    return_to_launch (bool): Whether to return to launch after completing the mission. Default is True.\n\nReturns:\n    dict: Status message with success or error."
+ },
+ "pause_mission": {
+  "module": "mission",
+  "params": [
+   {
+    "name": "mode",
+    "annotation": "str",
+    "required": false,
+    "default": "'guided_hold'"
+   }
+  ],
+  "doc": "Pause the running mission. v2 replaces the v1 deprecated stub with a real,\nSAFE implementation.\n\nmode=\"guided_hold\" (DEFAULT, RECOMMENDED): switches to GUIDED and holds\nthe current position/altitude - the fix for the documented v1 crash\n(LOITER descends without RC throttle input; see\nLOITER_MODE_CRASH_REPORT.md). Same behavior as hold_mission_position.\n\nmode=\"native_hold\": firmware-native pause (MavSDK mission pause ->\nHold/Loiter). \u26a0\ufe0f On ArduPilot, LOITER altitude depends on RC throttle;\non a real drone WITHOUT an RC transmitter at mid-throttle this can\ndescend. Only use with RC present or on PX4.\n\nTo continue the mission afterwards use resume_mission (optionally\nset_current_waypoint first).\n\nArgs:\n    mode (str): \"guided_hold\" (default, safe) or \"native_hold\".\n\nReturns:\n    dict: status + position/waypoint info."
+ },
+ "hold_mission_position": {
+  "module": "mission",
+  "params": [],
+  "doc": "Alternative to pause_mission that holds position in GUIDED mode instead of LOITER.\nThis interrupts the current mission and switches to GUIDED mode to hold the current position.\nUnlike pause_mission, this does NOT enter LOITER mode.\n\nNOTE: This stops the mission entirely. To continue the mission after using this,\nyou must use set_current_waypoint() to jump back to a waypoint and resume_mission(),\nor upload/initiate a new mission.\n\nUse this when you want to:\n- Pause flight without entering LOITER mode\n- Maintain altitude stability (GUIDED mode)\n- Temporarily interrupt a mission for manual control\n\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n\nReturns:\n    dict: Status message with current position and waypoint info."
+ },
+ "resume_mission": {
+  "module": "mission",
+  "params": [],
+  "doc": "Resume a previously paused mission.\nThe drone will continue from where it was paused.\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n\nReturns:\n    dict: Status message with success or error including current waypoint."
+ },
+ "clear_mission": {
+  "module": "mission",
+  "params": [],
+  "doc": "Clear the current mission from the drone.\nRemoves all uploaded waypoints.\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n\nReturns:\n    dict: Status message with success or error."
+ },
+ "upload_mission": {
+  "module": "mission",
+  "params": [
+   {
+    "name": "waypoints",
+    "annotation": "list",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "Upload a mission to the drone WITHOUT starting it.\nAllows preparing missions in advance.\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n    waypoints (list): List of waypoint dictionaries with keys:\n                     - latitude_deg (float): Waypoint latitude\n                     - longitude_deg (float): Waypoint longitude\n                     - relative_altitude_m (float): Altitude above home\n                     - speed_m_s (float, optional): Speed to waypoint\n\nReturns:\n    dict: Status message with mission summary.\n\nExamples:\n    waypoints = [\n        {\"latitude_deg\": 33.645, \"longitude_deg\": -117.842, \"relative_altitude_m\": 10},\n        {\"latitude_deg\": 33.646, \"longitude_deg\": -117.843, \"relative_altitude_m\": 15},\n        {\"latitude_deg\": 33.647, \"longitude_deg\": -117.844, \"relative_altitude_m\": 20}\n    ]\n    upload_mission(waypoints)\n\nNote:\n    - Mission is uploaded but NOT started automatically\n    - Use initiate_mission or start_mission to begin execution\n    - Clears any existing mission first\n\nImportant:\n    Pass waypoints as a properly formatted list of dictionaries.\n    Each waypoint MUST have: latitude_deg, longitude_deg, relative_altitude_m"
+ },
+ "download_mission": {
+  "module": "mission",
+  "params": [],
+  "doc": "Download the current mission from the drone.\nRetrieves all waypoints stored on the drone.\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n\nReturns:\n    dict: Mission data with all waypoints.\n\nUse Cases:\n    - Backup current mission\n    - Verify uploaded mission\n    - Check drone's planned route\n    - Mission debugging\n\nNote:\n    Mission download may occasionally fail with \"UNSUPPORTED\" immediately after upload\n    due to ArduPilot mission state synchronization. If this happens, wait a moment and\n    try again, or use mission_progress() to verify the mission exists."
+ },
+ "set_current_waypoint": {
+  "module": "mission",
+  "params": [
+   {
+    "name": "waypoint_index",
+    "annotation": "int",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "Jump to a specific waypoint in the current mission.\nAllows skipping ahead or going back in a mission.\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n    waypoint_index (int): Waypoint number to jump to (0-based index).\n\nReturns:\n    dict: Status message with new current waypoint.\n\nExamples:\n    - set_current_waypoint(0) - Jump to first waypoint (restart mission)\n    - set_current_waypoint(5) - Skip to waypoint 5\n    - set_current_waypoint(3) - Go back to waypoint 3\n\nUse Cases:\n    - Skip completed waypoints\n    - Restart mission from beginning\n    - Re-survey specific area\n    - Mission recovery after interruption"
+ },
+ "is_mission_finished": {
+  "module": "mission",
+  "params": [],
+  "doc": "Check if the current mission has completed.\nReturns true if all waypoints have been reached.\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n\nReturns:\n    dict: Boolean indicating if mission is finished.\n\nUse Cases:\n    - Monitor mission completion\n    - Trigger post-mission actions\n    - Mission automation\n    - Status monitoring"
+ },
+ "rtl_after_mission": {
+  "module": "mission",
+  "params": [
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "enabled",
+    "annotation": "bool",
+    "required": false,
+    "default": "True"
+   }
+  ],
+  "doc": "Get or set whether the drone returns to launch automatically after the\nlast mission item.\n\nArgs:\n    action (str): \"get\" or \"set\".\n    enabled (bool): for \"set\": True = RTL after mission (default).\n\nReturns:\n    dict: status (+ enabled for \"get\")."
+ },
+ "cancel_mission_transfer": {
+  "module": "mission",
+  "params": [
+   {
+    "name": "direction",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "Cancel an in-progress mission upload or download (mission plugin).\n\nOnly meaningful while a transfer is running; errors otherwise.\n\nArgs:\n    direction (str): \"upload\" or \"download\".\n\nReturns:\n    dict: status."
+ },
+ "import_qgc_mission": {
+  "module": "mission_raw",
+  "params": [
+   {
+    "name": "plan_json",
+    "annotation": "str",
+    "required": false,
+    "default": "''"
+   },
+   {
+    "name": "plan_path",
+    "annotation": "str",
+    "required": false,
+    "default": "''"
+   },
+   {
+    "name": "upload",
+    "annotation": "bool",
+    "required": false,
+    "default": "True"
+   }
+  ],
+  "doc": "Import a QGroundControl .plan (JSON) mission and optionally upload it\nto the drone - mission, geofence, and rally points included.\n\nProvide the plan either inline (plan_json - the full .plan file content\nas a string) or as a server-local file path (plan_path). Use\ninitiate_mission/raw_mission_control to fly it afterwards.\n\nArgs:\n    plan_json (str): full QGC .plan JSON content (mutually exclusive with\n        plan_path).\n    plan_path (str): server-local path to a .plan file.\n    upload (bool): if True (default), upload the imported items to the\n        drone; if False, only parse and report counts.\n\nReturns:\n    dict: status + item counts (mission/geofence/rally) and whether each\n    was uploaded."
+ },
+ "rally_points": {
+  "module": "mission_raw",
+  "params": [
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "points",
+    "annotation": "list | None",
+    "required": false,
+    "default": "None"
+   }
+  ],
+  "doc": "Upload or download rally points (safe alternative landing/loiter\nlocations used by RTL logic on supported firmwares).\n\nArgs:\n    action (str): \"upload\" (replaces all rally points) or \"download\".\n    points (list): for upload: [{\"latitude_deg\": float, \"longitude_deg\":\n        float, \"altitude_m\": float (relative to home, default 0)}].\n\nReturns:\n    dict: status; download returns the rally items."
+ },
+ "raw_geofence_transfer": {
+  "module": "mission_raw",
+  "params": [
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "items",
+    "annotation": "list | None",
+    "required": false,
+    "default": "None"
+   }
+  ],
+  "doc": "EXPERT: raw MAVLink fence transfer. Prefer upload_geofence /\nclear_geofence for normal fence management; this tool gives raw item\naccess (e.g. to verify what is actually stored on the autopilot).\n\nArgs:\n    action (str): \"download\" (returns the fence items stored on the\n        drone) or \"upload\" (raw items).\n    items (list): for upload: raw mission-item dicts {\"frame\", \"command\",\n        \"x\" (lat*1e7 int), \"y\" (lon*1e7 int), \"z\", \"param1\"..\"param4\"}.\n\nReturns:\n    dict: status; download returns the fence items."
+ },
+ "raw_mission_control": {
+  "module": "mission_raw",
+  "params": [
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "index",
+    "annotation": "int",
+    "required": false,
+    "default": "0"
+   },
+   {
+    "name": "timeout_s",
+    "annotation": "float",
+    "required": false,
+    "default": "10.0"
+   }
+  ],
+  "doc": "EXPERT: raw mission-protocol control. Prefer the mission tools\n(initiate_mission, resume_mission, ...) for normal flying; this tool\nexposes the raw plugin for full protocol access.\n\nArgs:\n    action (str): \"start\" (drone must be armed), \"pause\", \"clear\",\n        \"set_current\" (jump to item `index`), \"progress\" (read one\n        current/total progress report), \"cancel_upload\" or\n        \"cancel_download\" (only succeed while a transfer is running).\n    index (int): item index for \"set_current\".\n    timeout_s (float): for \"progress\": how long to wait for a report\n        (1-120, default 10). Progress is emitted on CHANGE - a fresh\n        read may wait until the next waypoint transition, so use a\n        window longer than a mission leg when polling mid-flight.\n\nReturns:\n    dict: status (+ progress for \"progress\")."
+ },
+ "offboard_control": {
+  "module": "offboard",
+  "params": [
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "Start, stop, or query offboard (continuous setpoint) control.\n\nOffboard mode makes the drone continuously follow the last setpoint sent\nwith the offboard_set_* tools.\n\nWORKFLOW: 1) send a setpoint (e.g. offboard_set_velocity_ned),\n2) offboard_control(\"start\"), 3) update setpoints as needed,\n4) offboard_control(\"stop\") - the vehicle then holds position\n(Hold/Loiter mode). The drone must be armed and flying (see takeoff).\n\nArgs:\n    action (str): \"start\" (requires a setpoint to have been set first),\n        \"stop\" (exit offboard, hold position), or \"status\" (read-only:\n        whether offboard is active + stale-watchdog state).\n\nReturns:\n    dict: status; for \"status\" also offboard_active and setpoint info."
+ },
+ "offboard_set_position_ned": {
+  "module": "offboard",
+  "params": [
+   {
+    "name": "north_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "east_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "down_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "yaw_deg",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "velocity",
+    "annotation": "dict | None",
+    "required": false,
+    "default": "None"
+   },
+   {
+    "name": "acceleration",
+    "annotation": "dict | None",
+    "required": false,
+    "default": "None"
+   }
+  ],
+  "doc": "Set an offboard position setpoint in local NED frame (meters from the\noffboard origin; down is positive, so -15 means 15 m above it), with\noptional velocity/acceleration feed-forward.\n\nSelf-terminating: the drone flies to the target and stops there, so no\nstale-timeout applies. Requires offboard_control(\"start\") to take effect.\n\nArgs:\n    north_m (float): target north offset in meters.\n    east_m (float): target east offset in meters.\n    down_m (float): target down offset in meters (negative = up).\n    yaw_deg (float): target heading in degrees (0 = north).\n    velocity (dict, optional): feed-forward {\"north_m_s\", \"east_m_s\",\n        \"down_m_s\", \"yaw_deg\"}.\n    acceleration (dict, optional): feed-forward {\"north_m_s2\", \"east_m_s2\",\n        \"down_m_s2\"}; requires velocity too.\n\nReturns:\n    dict: status."
+ },
+ "offboard_set_position_global": {
+  "module": "offboard",
+  "params": [
+   {
+    "name": "latitude_deg",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "longitude_deg",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "altitude_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "yaw_deg",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "altitude_type",
+    "annotation": "str",
+    "required": false,
+    "default": "'rel_home'"
+   }
+  ],
+  "doc": "Set an offboard position setpoint as a global (GPS) coordinate.\n\nSelf-terminating: the drone flies to the target and stops there.\nRequires offboard_control(\"start\") to take effect.\n\nArgs:\n    latitude_deg (float): target latitude.\n    longitude_deg (float): target longitude.\n    altitude_m (float): target altitude, interpreted per altitude_type.\n    yaw_deg (float): target heading in degrees (0 = north).\n    altitude_type (str): \"amsl\" (above mean sea level), \"rel_home\"\n        (relative to home, default) or \"agl\" (above ground level).\n\nReturns:\n    dict: status."
+ },
+ "offboard_set_velocity_ned": {
+  "module": "offboard",
+  "params": [
+   {
+    "name": "north_m_s",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "east_m_s",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "down_m_s",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "yaw_deg",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "stale_timeout_s",
+    "annotation": "float",
+    "required": false,
+    "default": "DEFAULT_STALE_TIMEOUT_S"
+   }
+  ],
+  "doc": "Set an offboard velocity setpoint in NED frame (m/s; down positive).\n\nMOTION SETPOINT - the drone keeps moving at this velocity until you send\na new setpoint, stop offboard, or the stale-timeout auto-brake fires.\nRequires offboard_control(\"start\") to take effect.\n\nArgs:\n    north_m_s (float): velocity north (m/s, max 20).\n    east_m_s (float): velocity east (m/s).\n    down_m_s (float): velocity down (m/s, negative = climb).\n    yaw_deg (float): heading to hold in degrees (0 = north).\n    stale_timeout_s (float): auto-brake to hover if no new setpoint within\n        this many seconds (1-120, default 15).\n\nReturns:\n    dict: status."
+ },
+ "offboard_set_velocity_body": {
+  "module": "offboard",
+  "params": [
+   {
+    "name": "forward_m_s",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "right_m_s",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "down_m_s",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "yawspeed_deg_s",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "stale_timeout_s",
+    "annotation": "float",
+    "required": false,
+    "default": "DEFAULT_STALE_TIMEOUT_S"
+   }
+  ],
+  "doc": "Set an offboard velocity setpoint in the drone's BODY frame\n(forward/right/down, m/s) with a yaw rate - useful for \"fly forward\",\norbit-like arcs, or camera-relative motion.\n\nMOTION SETPOINT - persists until replaced/stopped; auto-brakes after\nstale_timeout_s. Requires offboard_control(\"start\") to take effect.\n\nArgs:\n    forward_m_s (float): velocity forward along heading (m/s, max 20).\n    right_m_s (float): velocity to the right (m/s).\n    down_m_s (float): velocity down (m/s, negative = climb).\n    yawspeed_deg_s (float): yaw rate clockwise (deg/s, max 180).\n    stale_timeout_s (float): auto-brake window in seconds (1-120).\n\nReturns:\n    dict: status."
+ },
+ "offboard_set_attitude": {
+  "module": "offboard",
+  "params": [
+   {
+    "name": "roll",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "pitch",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "yaw",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "thrust",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "mode",
+    "annotation": "str",
+    "required": false,
+    "default": "'angle'"
+   },
+   {
+    "name": "stale_timeout_s",
+    "annotation": "float",
+    "required": false,
+    "default": "DEFAULT_STALE_TIMEOUT_S"
+   }
+  ],
+  "doc": "Set a low-level offboard attitude setpoint (EXPERT - prefer velocity or\nposition setpoints for navigation).\n\nmode=\"angle\": roll/pitch/yaw are attitude angles in degrees.\nmode=\"rate\": roll/pitch/yaw are body angular rates in deg/s.\nthrust is normalized 0..1 (\u22480.5 hovers a typical multicopter).\n\nMOTION SETPOINT - persists until replaced/stopped; auto-brakes after\nstale_timeout_s. Requires offboard_control(\"start\") to take effect.\n\nArgs:\n    roll (float): roll angle (deg) or rate (deg/s per mode).\n    pitch (float): pitch angle (deg) or rate (deg/s). Negative pitch\n        moves forward in \"angle\" mode.\n    yaw (float): yaw angle (deg) or rate (deg/s).\n    thrust (float): normalized collective thrust, 0..1.\n    mode (str): \"angle\" (default) or \"rate\".\n    stale_timeout_s (float): auto-brake window in seconds (1-120).\n\nReturns:\n    dict: status."
+ },
+ "offboard_set_acceleration_ned": {
+  "module": "offboard",
+  "params": [
+   {
+    "name": "north_m_s2",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "east_m_s2",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "down_m_s2",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "stale_timeout_s",
+    "annotation": "float",
+    "required": false,
+    "default": "DEFAULT_STALE_TIMEOUT_S"
+   }
+  ],
+  "doc": "Set an offboard acceleration setpoint in NED frame (m/s^2, max 10;\ndown positive). EXPERT - prefer velocity or position setpoints.\n\nMOTION SETPOINT - persists until replaced/stopped; auto-brakes after\nstale_timeout_s. Requires offboard_control(\"start\") to take effect.\n\nReturns:\n    dict: status."
+ },
+ "offboard_set_actuator_control": {
+  "module": "offboard",
+  "params": [
+   {
+    "name": "groups",
+    "annotation": "list",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "stale_timeout_s",
+    "annotation": "float",
+    "required": false,
+    "default": "DEFAULT_STALE_TIMEOUT_S"
+   }
+  ],
+  "doc": "Directly command actuator control groups (EXPERT, PX4-only in\npractice: ArduPilot accepts the message but does not act on it -\nSET_ACTUATOR_CONTROL_TARGET has no handler there).\n\nArgs:\n    groups (list): 1-2 control groups, each a list of up to 8 normalized\n        control values in [-1, 1] (PX4 mixer group semantics).\n    stale_timeout_s (float): auto-brake window in seconds (1-120).\n\nReturns:\n    dict: status."
+ },
+ "get_parameter": {
+  "module": "param",
+  "params": [
+   {
+    "name": "name",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "param_type",
+    "annotation": "str",
+    "required": false,
+    "default": "'auto'"
+   }
+  ],
+  "doc": "Get the value of a drone parameter by name.\nParameters control drone behavior (e.g., flight speeds, sensor settings).\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n    name (str): Parameter name (e.g., \"RTL_ALT\", \"WPNAV_SPEED\", \"BATT_CAPACITY\").\n    param_type (str): Type of parameter - \"int\", \"float\", \"custom\" (string\n                      parameters via the PARAM_EXT protocol; PX4 only -\n                      ArduPilot does not implement it), or \"auto\"\n                      (default: try float first, then int).\n\nReturns:\n    dict: Parameter value and type, or error if parameter not found.\n\nExamples:\n    - get_parameter(\"RTL_ALT\", \"float\") - Get return-to-launch altitude\n    - get_parameter(\"BATT_CAPACITY\", \"int\") - Get battery capacity in mAh\n    - get_parameter(\"WPNAV_SPEED\") - Auto-detect parameter type"
+ },
+ "set_parameter": {
+  "module": "param",
+  "params": [
+   {
+    "name": "name",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "value",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "param_type",
+    "annotation": "str",
+    "required": false,
+    "default": "'auto'"
+   },
+   {
+    "name": "custom_value",
+    "annotation": "str",
+    "required": false,
+    "default": "''"
+   }
+  ],
+  "doc": "Set the value of a drone parameter by name.\n\u26a0\ufe0f WARNING: Changing parameters can affect flight behavior. Only modify if you know what you're doing!\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n    name (str): Parameter name (e.g., \"RTL_ALT\", \"WPNAV_SPEED\").\n    value (float): New parameter value (ignored for param_type=\"custom\").\n    param_type (str): Type of parameter - \"int\", \"float\", \"custom\"\n                      (string parameters via PARAM_EXT; PX4 only), or\n                      \"auto\" (default: probe the parameter's real type,\n                      float first then int - NOT inferred from the value).\n    custom_value (str): the string value for param_type=\"custom\".\n\nReturns:\n    dict: Confirmation of parameter change with old and new values.\n\nExamples:\n    - set_parameter(\"RTL_ALT\", 1500.0, \"float\") - Set RTL altitude to 15m\n    - set_parameter(\"BATT_CAPACITY\", 5200, \"int\") - Set battery capacity to 5200 mAh\n\n\u26a0\ufe0f CAUTION:\n    - Invalid parameters can make the drone unflyable\n    - Always verify values are within safe ranges\n    - Consider backing up parameters before changes\n    - Some parameters require reboot to take effect"
+ },
+ "list_parameters": {
+  "module": "param",
+  "params": [
+   {
+    "name": "filter_prefix",
+    "annotation": "str",
+    "required": false,
+    "default": "''"
+   }
+  ],
+  "doc": "List all available drone parameters.\nThis can return a large number of parameters (100-1000+).\nOptionally filter by prefix to narrow results.\nWaits for connection if not ready.\n\nArgs:\n    ctx (Context): The context of the request.\n    filter_prefix (str): Optional prefix to filter parameters (e.g., \"BATT\" for battery params).\n                        Leave empty to get all parameters.\n\nReturns:\n    dict: List of all parameters with their names, values, and types.\n\nExamples:\n    - list_parameters() - Get ALL parameters (may be very long!)\n    - list_parameters(\"RTL\") - Get all Return-to-Launch parameters\n    - list_parameters(\"BATT\") - Get all battery-related parameters\n    - list_parameters(\"WPNAV\") - Get all waypoint navigation parameters\n\nCommon Parameter Prefixes:\n    - RTL_ : Return to Launch settings\n    - BATT_ : Battery settings\n    - WPNAV_ : Waypoint navigation\n    - EK2_ / EK3_ : EKF (Extended Kalman Filter) settings\n    - COMPASS_ : Compass/magnetometer settings\n    - GPS_ : GPS settings"
+ },
+ "param_select_component": {
+  "module": "param",
+  "params": [
+   {
+    "name": "component_id",
+    "annotation": "int",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "protocol_version",
+    "annotation": "str",
+    "required": false,
+    "default": "'v1'"
+   }
+  ],
+  "doc": "EXPERT: choose which MAVLink component subsequent parameter operations\ntalk to (default is the autopilot). Use e.g. for camera or gimbal\ncomponents that expose their own parameter sets.\n\nArgs:\n    component_id (int): MAVLink component id (1 = autopilot, 100+ = cameras, ...).\n    protocol_version (str): \"v1\" (standard PARAM) or \"ext\" (PARAM_EXT).\n\nReturns:\n    dict: status."
+ },
+ "manual_control": {
+  "module": "peripherals",
+  "params": [
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "x",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "y",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "z",
+    "annotation": "float",
+    "required": false,
+    "default": "0.5"
+   },
+   {
+    "name": "r",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   }
+  ],
+  "doc": "Simulated manual (joystick) control.\n\nCall action=\"position\" or \"altitude\" once to enter the assisted mode,\nthen action=\"input\" repeatedly to stream stick values.\n\nArgs:\n    action (str): \"position\" (start position-assisted control),\n        \"altitude\" (start altitude-assisted control), or \"input\" (send one\n        stick sample).\n    x (float): pitch stick, -1..1 (forward positive).\n    y (float): roll stick, -1..1 (right positive).\n    z (float): throttle stick, 0..1 (0.5 = hover for altitude mode).\n    r (float): yaw stick, -1..1 (clockwise positive).\n\nReturns:\n    dict: status."
+ },
+ "follow_me": {
+  "module": "peripherals",
+  "params": [
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "latitude_deg",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "longitude_deg",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "absolute_altitude_m",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "follow_height_m",
+    "annotation": "float",
+    "required": false,
+    "default": "8.0"
+   },
+   {
+    "name": "follow_distance_m",
+    "annotation": "float",
+    "required": false,
+    "default": "8.0"
+   },
+   {
+    "name": "follow_angle_deg",
+    "annotation": "float",
+    "required": false,
+    "default": "180.0"
+   },
+   {
+    "name": "responsiveness",
+    "annotation": "float",
+    "required": false,
+    "default": "0.5"
+   }
+  ],
+  "doc": "Follow-me mode: the drone follows a moving target (e.g. the operator's\nphone GPS).\n\nFIRMWARE NOTE: this is a PX4 flight mode. ArduCopter has no equivalent -\nset_config/start return failures there (observed). Workflow on PX4:\naction=\"config\" (optional) -> \"start\" -> repeated \"target\" updates ->\n\"stop\".\n\nArgs:\n    action (str): \"config\", \"start\", \"stop\", \"target\", \"status\", or\n        \"last_target\".\n    latitude_deg, longitude_deg, absolute_altitude_m (float): target\n        position for action=\"target\".\n    follow_height_m, follow_distance_m, follow_angle_deg, responsiveness\n        (float): parameters for action=\"config\".\n\nReturns:\n    dict: status (+ data for status/last_target)."
+ },
+ "payload_mechanism": {
+  "module": "peripherals",
+  "params": [
+   {
+    "name": "device",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "action",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "instance",
+    "annotation": "int",
+    "required": false,
+    "default": "0"
+   },
+   {
+    "name": "length_m",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "rate_m_s",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   }
+  ],
+  "doc": "Control a payload gripper or winch.\n\nFIRMWARE NOTE: requires the mechanism wired to a servo/PWM output on the\nautopilot. On the plain SITL these commands time out (no physical device);\nwinch STATUS telemetry is available. Verified reachable, effect untestable\nin SITL - see docs/firmware_notes.csv.\n\nArgs:\n    device (str): \"gripper\" or \"winch\".\n    action (str): gripper -> \"grab\" | \"release\"; winch -> \"relax\" |\n        \"retract\" | \"deliver\" | \"hold\" | \"lock\" | \"load\" | \"load_payload\"\n        | \"abandon\" | \"status\" | \"rate\" (needs rate_m_s) | \"length\" (needs\n        length_m, rate_m_s).\n    instance (int): device instance.\n    length_m (float): winch line length for action=\"length\".\n    rate_m_s (float): winch line rate for action=\"rate\"/\"length\".\n\nReturns:\n    dict: status (+ winch status for action=\"status\")."
+ },
+ "read_transponder": {
+  "module": "peripherals",
+  "params": [
+   {
+    "name": "rate_hz",
+    "annotation": "float",
+    "required": false,
+    "default": "1.0"
+   },
+   {
+    "name": "timeout_s",
+    "annotation": "float",
+    "required": false,
+    "default": "20.0"
+   }
+  ],
+  "doc": "Read one ADS-B transponder report (nearby aircraft), setting the update\nrate first.\n\nVerified on ArduCopter SITL with simulated ADS-B traffic\n(SIM_ADSB_COUNT); returns the ICAO address, position and velocity of a\nnearby aircraft.\n\nArgs:\n    rate_hz (float): transponder update rate to request (0.1-10).\n    timeout_s (float): how long to wait for a report (1-60).\n\nReturns:\n    dict: status + one ADS-B vehicle report (or a note if no traffic)."
+ },
+ "play_tune": {
+  "module": "peripherals",
+  "params": [
+   {
+    "name": "notes",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "tempo",
+    "annotation": "int",
+    "required": false,
+    "default": "120"
+   }
+  ],
+  "doc": "Play a tune/buzzer melody on the autopilot.\n\nArgs:\n    notes (str): space-separated note letters a-g (optionally with an\n        octave prefix), e.g. \"c d e f g\". Rests: \"p\".\n    tempo (int): beats per minute (40-300).\n\nReturns:\n    dict: status."
+ },
+ "send_mocap": {
+  "module": "peripherals",
+  "params": [
+   {
+    "name": "kind",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "x_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "y_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "z_m",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "roll_rad",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "pitch_rad",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   },
+   {
+    "name": "yaw_rad",
+    "annotation": "float",
+    "required": false,
+    "default": "0.0"
+   }
+  ],
+  "doc": "Feed an external motion-capture / visual position estimate to the\nautopilot (for indoor/GPS-denied flight).\n\nArgs:\n    kind (str): \"vision_position\" (position + attitude estimate),\n        \"mocap_pose\" (motion-capture attitude+position), or \"odometry\"\n        (position + attitude, in the local NED frame).\n    x_m, y_m, z_m (float): position in the local NED frame (meters).\n    roll_rad, pitch_rad, yaw_rad (float): attitude in radians.\n\nReturns:\n    dict: status."
+ },
+ "send_rtcm": {
+  "module": "peripherals",
+  "params": [
+   {
+    "name": "rtcm_base64",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "Forward an RTCM differential-GPS correction frame (base64-encoded) to\nthe autopilot for RTK positioning.\n\nArgs:\n    rtcm_base64 (str): base64-encoded RTCM data (typically relayed from an\n        NTRIP caster or RTK base station).\n\nReturns:\n    dict: status."
+ },
+ "calibrate": {
+  "module": "safety_ops",
+  "params": [
+   {
+    "name": "sensor",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "timeout_s",
+    "annotation": "float",
+    "required": false,
+    "default": "60.0"
+   }
+  ],
+  "doc": "Run a sensor calibration and report the progress log.\n\n\u26a0\ufe0f Do this on the ground, disarmed. Some calibrations (accelerometer,\nmagnetometer) normally require physically rotating the vehicle and will\nnot complete in SITL.\n\nArgs:\n    sensor (str): \"gyro\", \"accelerometer\", \"magnetometer\",\n        \"level_horizon\", or \"gimbal_accelerometer\".\n    timeout_s (float): max time to wait for completion (5-300, default 60).\n\nReturns:\n    dict: status + the sequence of progress/instruction messages."
+ },
+ "cancel_calibration": {
+  "module": "safety_ops",
+  "params": [],
+  "doc": "Cancel an in-progress calibration."
+ },
+ "inject_failure": {
+  "module": "safety_ops",
+  "params": [
+   {
+    "name": "unit",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "failure_type",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "instance",
+    "annotation": "int",
+    "required": false,
+    "default": "0"
+   }
+  ],
+  "doc": "SAFETY-EXPERIMENT tool: inject a simulated sensor/system failure.\n\nEnables controlled failure experiments (GPS loss, motor failure, ...) for\nthe paper's safety evaluation. SIMULATION ONLY.\n\nFIRMWARE NOTE: requires the autopilot's MAVSDK failure-injection hook. On\nArduPilot SITL this returns UNSUPPORTED (observed); inject failures there\nvia SIM_* parameters instead, e.g. set_parameter(\"SIM_GPS_DISABLE\", 1) or\n\"SIM_ENGINE_FAIL\". PX4 SITL supports this directly (needs\nSYS_FAILURE_EN=1).\n\nArgs:\n    unit (str): sensor/system to fail - one of gyro, accel, mag, baro,\n        gps, optical_flow, vio, distance_sensor, airspeed, battery, motor,\n        servo, avoidance, rc_signal, mavlink_signal.\n    failure_type (str): ok (clear), off, stuck, garbage, wrong, slow,\n        delayed, intermittent.\n    instance (int): sensor instance (0 = all instances of that unit).\n\nReturns:\n    dict: status."
+ },
+ "system_info": {
+  "module": "system",
+  "params": [
+   {
+    "name": "topic",
+    "annotation": "str",
+    "required": false,
+    "default": "'version'"
+   }
+  ],
+  "doc": "Get autopilot/system information.\n\nArgs:\n    topic (str): \"version\" (firmware/OS versions), \"identification\"\n        (hardware UID), \"product\" (vendor/product names),\n        \"flight_information\" (time boot / flight uid - PX4; ArduPilot\n        reports INFORMATION_NOT_RECEIVED_YET), or \"speed_factor\" (sim\n        speed multiplier; PX4).\n\nReturns:\n    dict: status + the requested info."
+ },
+ "send_status_text": {
+  "module": "system",
+  "params": [
+   {
+    "name": "text",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "severity",
+    "annotation": "str",
+    "required": false,
+    "default": "'info'"
+   }
+  ],
+  "doc": "Send a STATUSTEXT message onto the MAVLink network (e.g. visible in a\nGCS log). Useful for annotating flight logs from the LLM.\n\nArgs:\n    text (str): message text (<= 50 chars recommended).\n    severity (str): \"emergency\", \"alert\", \"critical\", \"error\", \"warning\",\n        \"notice\", \"info\" (default), or \"debug\".\n\nReturns:\n    dict: status."
+ },
+ "set_mavlink_timeout": {
+  "module": "system",
+  "params": [
+   {
+    "name": "timeout_s",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "Set the MAVLink heartbeat timeout used to detect a lost connection.\n\nArgs:\n    timeout_s (float): timeout in seconds (0.1-30).\n\nReturns:\n    dict: status."
+ },
+ "get_position": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Get the position of the drone in latitude/longitude degrees and altitude in meters.\nThe drone must be connected and have a global position estimate.\n\nReturns:\n    dict: A dict with the position or error status."
+ },
+ "print_status_text": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Return the next status text message from the drone (waits up to 10s)."
+ },
+ "get_imu": {
+  "module": "telemetry",
+  "params": [
+   {
+    "name": "n",
+    "annotation": "int",
+    "required": false,
+    "default": "1"
+   }
+  ],
+  "doc": "Fetch the first n IMU data points from the drone.\n\nArgs:\n    ctx (Context): The context of the request.\n    n (int): The number of IMU data points to fetch (1-100). Default 1.\n\nReturns:\n    dict: A dict with status and list of IMU data points."
+ },
+ "get_flight_mode": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Get the current flight mode of the drone.\n\nReturns:\n    dict: The current flight mode of the drone or error status."
+ },
+ "get_battery": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Get the current battery status including voltage and remaining percentage.\nCritical for monitoring flight time and knowing when to land.\n\nReturns:\n    dict: Battery voltage (V), remaining percentage (%), and status."
+ },
+ "get_health": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Get comprehensive system health status for pre-flight checks.\nReturns status of GPS, accelerometer, gyro, magnetometer, and more.\n\nReturns:\n    dict: Comprehensive health status of all drone subsystems."
+ },
+ "get_home_position": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Get the home position where Return to Launch (RTL) will return to.\n\nWARNING, AND IT IS THE POINT OF THIS TOOL: \"home\" is not necessarily where\nthe aircraft took off from. ArduPilot re-sets it to wherever the aircraft\nwas standing the last time it ARMED, so an aircraft that landed somewhere,\nre-armed and took off again has left its home at that somewhere. Ten trials\nof the T6 hospital campaign read a home coordinate between 437 m and 1528 m\nfrom where the aircraft was actually parked; three flew to it and reported\nthat they had returned to the launch point. One of those \"return flights\"\nwas 3.7 m long.\n\nSo the answer carries two coordinates:\n\n- ``home``: what the autopilot will fly to on RTL, right now.\n- ``session_launch_point``: where this server's link to the aircraft began,\n  recorded once and never moved.\n\nWhen they disagree, ``home_matches_session_launch`` is false and\n``warning`` says by how much. Use ``session_launch_point`` (or a position\nyou read yourself before flying) when you mean \"where we started\".\n\nReturns:\n    dict: Both coordinates, their separation, and any disagreement warning."
+ },
+ "get_speed": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Get the current ground speed (velocity over ground).\nReturns velocity in North, East, Down directions.\n\nReturns:\n    dict: Current velocity in NED frame and total ground speed."
+ },
+ "get_attitude": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Get the current attitude (orientation) of the drone.\nReturns roll, pitch, and yaw angles in degrees.\n\nReturns:\n    dict: Roll, pitch, yaw angles in degrees."
+ },
+ "get_gps_info": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Get detailed GPS information including number of satellites and fix type.\nImportant for assessing navigation quality.\n\nReturns:\n    dict: GPS satellite count, fix type, and quality metrics."
+ },
+ "get_in_air": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Check if the drone is currently in the air (flying) or on the ground.\n\nReturns:\n    dict: Boolean indicating if drone is airborne."
+ },
+ "get_armed": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Check if the drone is currently armed (motors can spin).\n\nReturns:\n    dict: Boolean indicating if drone is armed."
+ },
+ "get_health_all_ok": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Quick health check - returns True if ALL systems are OK for flight.\nUse this for quick pre-flight go/no-go decisions; for the detailed\nbreakdown use get_health().\n\nReturns:\n    dict: Boolean indicating if all systems pass health checks."
+ },
+ "get_landed_state": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Get detailed landed state of the drone.\nReturns one of: ON_GROUND, TAKING_OFF, IN_AIR, LANDING, or UNKNOWN.\n\nReturns:\n    dict: Landed state enum value and descriptive text."
+ },
+ "get_rc_status": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Get RC (Remote Control) controller connection status and signal strength.\n\nReturns:\n    dict: RC availability status and signal strength percentage."
+ },
+ "get_heading": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Get the current compass heading of the drone in degrees\n(0 = North, 90 = East, 180 = South, 270 = West).\n\nReturns:\n    dict: Heading in degrees and cardinal direction."
+ },
+ "get_odometry": {
+  "module": "telemetry",
+  "params": [],
+  "doc": "Get combined odometry data: position, velocity, and orientation.\n\nNOTE: requires the autopilot to publish the ODOMETRY message. ArduPilot\ndoes not by default (this returns a timeout error there); position/\nvelocity/attitude have dedicated tools that work everywhere.\n\nReturns:\n    dict: Combined position, velocity, and orientation data."
+ },
+ "get_telemetry_extended": {
+  "module": "telemetry",
+  "params": [
+   {
+    "name": "topic",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "timeout_s",
+    "annotation": "float",
+    "required": false,
+    "default": "10.0"
+   }
+  ],
+  "doc": "Read one sample of a less-common telemetry topic (generic schema).\n\nDedicated tools exist for the common topics (get_position, get_battery,\n...); this covers the long tail. Whether a topic emits depends on the\nautopilot - e.g. ArduPilot publishes raw_gps/scaled_pressure/\ndistance_sensor but not odometry/altitude/vtol_state (see coverage\nmatrix firmware notes). A timeout is an honest \"not published here\".\n\nArgs:\n    topic (str): one of altitude, attitude_quaternion,\n        attitude_angular_velocity_body, raw_gps, scaled_pressure,\n        position_velocity_ned, unix_epoch_time, distance_sensor,\n        vtol_state, ground_truth, fixedwing_metrics,\n        actuator_control_target, actuator_output_status, scaled_imu,\n        raw_imu, gps_global_origin.\n    timeout_s (float): how long to wait for a sample (1-60, default 10).\n\nReturns:\n    dict: status + the sample converted to JSON (field names follow\n    MavSDK)."
+ },
+ "set_telemetry_rate": {
+  "module": "telemetry",
+  "params": [
+   {
+    "name": "topic",
+    "annotation": "str",
+    "required": true,
+    "default": null
+   },
+   {
+    "name": "rate_hz",
+    "annotation": "float",
+    "required": true,
+    "default": null
+   }
+  ],
+  "doc": "Ask the autopilot to publish a telemetry topic at a given rate.\n\nSupport is firmware-dependent: the autopilot may deny rates for topics it\ndoes not publish (e.g. ArduPilot denies odometry). Denials are surfaced\nas errors.\n\nArgs:\n    topic (str): one of position, home, in_air, landed_state, vtol_state,\n        attitude_quaternion, attitude_euler, velocity_ned, gps_info,\n        battery, rc_status, actuator_control_target,\n        actuator_output_status, odometry, position_velocity_ned,\n        ground_truth, fixedwing_metrics, imu, scaled_imu, raw_imu,\n        unix_epoch_time, distance_sensor, altitude.\n    rate_hz (float): messages per second (0.1-200).\n\nReturns:\n    dict: status."
+ }
+}

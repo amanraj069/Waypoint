@@ -1,0 +1,251 @@
+{
+  "methods": {
+    "no-corrections": {
+      "cases": 20,
+      "cases_without_time_limit": 4,
+      "houseworld1": {
+        "success": 2,
+        "rate": 0.1,
+        "wilson95": [
+          0.0279,
+          0.301
+        ]
+      },
+      "houseworld2": {
+        "success": 2,
+        "rate": 0.1,
+        "wilson95": [
+          0.0279,
+          0.301
+        ]
+      },
+      "syntactically_correct": 6,
+      "planned": 6,
+      "pipeline_errors": 4,
+      "mean_llm_calls": 1.9,
+      "mean_time_total": 13.8,
+      "mean_time_planning": 3.1,
+      "by_family": {
+        "1": {
+          "cases": 2,
+          "houseworld1": 2,
+          "houseworld2": 2
+        },
+        "2": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "3": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "4": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "5": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "6": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "7": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "8": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "9": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "10": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        }
+      }
+    },
+    "syntax": {
+      "cases": 20,
+      "cases_without_time_limit": 4,
+      "houseworld1": {
+        "success": 4,
+        "rate": 0.2,
+        "wilson95": [
+          0.0807,
+          0.416
+        ]
+      },
+      "houseworld2": {
+        "success": 4,
+        "rate": 0.2,
+        "wilson95": [
+          0.0807,
+          0.416
+        ]
+      },
+      "syntactically_correct": 14,
+      "planned": 9,
+      "pipeline_errors": 5,
+      "mean_llm_calls": 3.55,
+      "mean_time_total": 27.4,
+      "mean_time_planning": 10.7,
+      "by_family": {
+        "1": {
+          "cases": 2,
+          "houseworld1": 2,
+          "houseworld2": 2
+        },
+        "2": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "3": {
+          "cases": 2,
+          "houseworld1": 2,
+          "houseworld2": 2
+        },
+        "4": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "5": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "6": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "7": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "8": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "9": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "10": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        }
+      }
+    },
+    "autotamp": {
+      "cases": 20,
+      "cases_without_time_limit": 4,
+      "houseworld1": {
+        "success": 5,
+        "rate": 0.25,
+        "wilson95": [
+          0.1119,
+          0.4687
+        ]
+      },
+      "houseworld2": {
+        "success": 5,
+        "rate": 0.25,
+        "wilson95": [
+          0.1119,
+          0.4687
+        ]
+      },
+      "syntactically_correct": 17,
+      "planned": 11,
+      "pipeline_errors": 4,
+      "mean_llm_calls": 3.7,
+      "mean_time_total": 34.9,
+      "mean_time_planning": 12.4,
+      "by_family": {
+        "1": {
+          "cases": 2,
+          "houseworld1": 2,
+          "houseworld2": 2
+        },
+        "2": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "3": {
+          "cases": 2,
+          "houseworld1": 2,
+          "houseworld2": 2
+        },
+        "4": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "5": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "6": {
+          "cases": 2,
+          "houseworld1": 1,
+          "houseworld2": 1
+        },
+        "7": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "8": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "9": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        },
+        "10": {
+          "cases": 2,
+          "houseworld1": 0,
+          "houseworld2": 0
+        }
+      }
+    }
+  },
+  "config": {
+    "model": "openai:gpt-5-nano",
+    "planner_time_limit": 30.0,
+    "enter_semantics": "released",
+    "lenient_replies": true,
+    "methods": [
+      "no-corrections",
+      "syntax",
+      "autotamp"
+    ],
+    "cases": 20,
+    "wall_seconds": 549.9
+  }
+}

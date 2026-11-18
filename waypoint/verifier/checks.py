@@ -512,12 +512,34 @@ def _angle_between(a: tuple[float, float], b: tuple[float, float]) -> float:
 # --------------------------------------------------------------------------
 
 
+def flown_end(leg: Leg, config: VerifierConfig) -> tuple[float, float, float]:
+    """The lowest the aircraft can be when it arrives over a leg's end.
+
+    A leg is flown straight unless it climbs faster than the airframe can: the
+    controller keeps its horizontal speed (never more than the commanded
+    speed) and climbs at `max_climb_rate`, so it sags below the line and
+    makes up the rest straight up over the end point. Its altitude over the
+    leg is therefore at least the straight line from the start to this point:
+    the start's altitude plus the climb rate times the time the horizontal
+    distance takes at the commanded speed, capped at the end's altitude.
+    """
+    sx, sy, sz = leg.start
+    ex, ey, ez = leg.end.xyz
+    dz = ez - sz
+    dh = math.hypot(ex - sx, ey - sy)
+    if dz <= 0 or dh <= EPS:
+        return (ex, ey, ez)
+    reachable = config.max_climb_rate * dh / max(leg.end.wp.speed, EPS)
+    return (ex, ey, sz + min(dz, reachable))
+
+
 def check_buildings(
-    flat: list[FlatWaypoint], legs: list[Leg], world: World | None
+    flat: list[FlatWaypoint], legs: list[Leg], world: World | None, config: VerifierConfig | None = None,
 ) -> list[Violation]:
-    """No waypoint may sit inside a building, and no leg may fly through one."""
+    """No waypoint may sit inside a building, and no leg may fly through one, as the leg is actually flown."""
     if not world or not world.buildings:
         return []
+    config = config or VerifierConfig()
 
     violations: list[Violation] = []
     occupied: set[int] = set()
@@ -525,6 +547,26 @@ def check_buildings(
     for fw in flat:
         building = world.collides(*fw.xyz)
         if building is None:
+            if fw.wp.action is not Action.LAND:
+                # Over a roof but too close to it: an aircraft stopping there sinks
+                # past the point before it holds (arrival radius plus braking).
+                for roof in world.buildings_at(fw.wp.x, fw.wp.y):
+                    gap = fw.wp.z - roof.roof
+                    if 0 < gap < config.roof_clearance:
+                        occupied.add(fw.index)
+                        violations.append(
+                            Violation(
+                                type=ViolationType.BUILDING,
+                                waypoint_index=fw.index,
+                                description=(
+                                    f"{fw.label} is only {gap:.1f} m above the roof of {roof.label()}; an aircraft "
+                                    f"stopping there sinks that far before it holds. Raise it to at least "
+                                    f"{roof.roof + config.roof_clearance:.0f} m."
+                                ),
+                                severity=Severity.CRITICAL,
+                            )
+                        )
+                        break
             continue
         occupied.add(fw.index)
         violations.append(
@@ -543,27 +585,53 @@ def check_buildings(
     for leg in legs:
         if leg.index in occupied or leg.index - 1 in occupied:
             continue  # already reported at the waypoint
-        for building, lowest in _legs_through(leg, world):
+        end = flown_end(leg, config)
+        sags = end[2] < leg.end.wp.z - EPS
+        how = (
+            f" (it climbs faster than the {config.max_climb_rate:g} m/s the aircraft can, so it flies "
+            "below the straight line)" if sags else ""
+        )
+        for building, lowest in _legs_through(leg, world, end[2], config.roof_clearance):
             violations.append(
                 Violation(
                     type=ViolationType.BUILDING,
                     waypoint_index=leg.index,
                     description=(
                         f"{leg.label} passes through {building.label()}: over the footprint the "
-                        f"route is as low as {lowest:.0f} m, below the {building.roof:.0f} m roof. "
+                        f"route is as low as {lowest:.0f} m, below the {building.roof:.0f} m roof plus the {config.roof_clearance:g} m it must clear it by{how}. "
                         "Route around the building, or climb above its roof before crossing it."
                     ),
                     severity=Severity.CRITICAL,
                 )
             )
+        if sags:
+            # The rest of the climb is straight up over the end point.
+            for building in world.buildings_at(end[0], end[1]):
+                if end[2] <= building.roof:
+                    violations.append(
+                        Violation(
+                            type=ViolationType.BUILDING,
+                            waypoint_index=leg.index,
+                            description=(
+                                f"{leg.label} climbs faster than the {config.max_climb_rate:g} m/s the aircraft "
+                                f"can: it arrives over the end point at only {end[2]:.0f} m and climbs the rest "
+                                f"straight up inside {building.label()}. Climb earlier, or slow the leg down."
+                            ),
+                            severity=Severity.CRITICAL,
+                        )
+                    )
+                    break
     return violations
 
 
-def _legs_through(leg: Leg, world: World) -> list[tuple[Building, float]]:
+def _legs_through(
+    leg: Leg, world: World, end_z: float | None = None, clearance: float = 0.0,
+) -> list[tuple[Building, float]]:
     """Buildings this leg flies into, with the route's lowest altitude over each.
 
-    The leg climbs or descends linearly, so its lowest point over a footprint is
-    at one end of the crossing -- no sampling needed to be exact.
+    The leg climbs or descends linearly (to `end_z` over its end, when the
+    climb rate holds it below the line), so its lowest point over a footprint
+    is at one end of the crossing -- no sampling needed to be exact.
     """
     line = leg.line_xy
     if line.geom_type != "LineString":
@@ -581,10 +649,11 @@ def _legs_through(leg: Leg, world: World) -> list[tuple[Building, float]]:
         ]
         if not fractions:
             continue
-        start_z, end_z = leg.start[2], leg.end.wp.z
-        altitudes = [start_z + (end_z - start_z) * f for f in (min(fractions), max(fractions))]
+        start_z = leg.start[2]
+        top_z = leg.end.wp.z if end_z is None else end_z
+        altitudes = [start_z + (top_z - start_z) * f for f in (min(fractions), max(fractions))]
         lowest = min(altitudes)
-        if lowest <= building.roof:
+        if lowest < building.roof + clearance:
             hits.append((building, lowest))
     return hits
 
@@ -641,8 +710,17 @@ def check_terrain(
     for leg in legs:
         if leg.index in grounded or leg.index - 1 in grounded:
             continue
-        worst = _lowest_clearance(leg, world, config.terrain_sample_step)
-        if worst is None or worst[0] >= config.min_ground_clearance:
+        # A grounded end is within GROUNDED of the ground, so leaving out one
+        # sample step plus that much keeps a vertical climb or descent legal.
+        skip = config.terrain_sample_step + GROUNDED
+        worst = lowest_clearance(
+            leg.start,
+            flown_end(leg, config),  # a steep climb sags below the line
+            world,
+            skip_start=skip if _grounded(leg.start, world) else 0.0,
+            skip_end=skip if leg.end.wp.action is Action.LAND or _grounded(leg.end.xyz, world) else 0.0,
+        )
+        if worst is None or worst[0] >= config.min_ground_clearance - 1e-6:
             continue
         clearance, x, y = worst
         problem = "flies into the hillside" if clearance < 0 else "skims the ground"
@@ -661,26 +739,90 @@ def check_terrain(
     return violations
 
 
-def _lowest_clearance(
-    leg: Leg, world: World, step: float
+#: Metres from the ground within which a route point counts as on it.
+GROUNDED = 0.5
+
+
+def _grounded(point: tuple[float, float, float], world: World) -> bool:
+    """On the ground: a launch pad, or a touchdown."""
+    return abs(point[2] - world.elevation_at(point[0], point[1])) <= GROUNDED
+
+
+def lowest_clearance(
+    start: tuple[float, float, float],
+    end: tuple[float, float, float],
+    world: World,
+    *,
+    skip_start: float = 0.0,
+    skip_end: float = 0.0,
 ) -> tuple[float, float, float] | None:
-    """Walk the leg and return the worst (clearance, x, y) over the ground."""
-    length = leg.length_3d
+    """The exact worst (clearance, x, y) over the ground along a straight leg.
+
+    Not sampled. The terrain is bilinear inside each grid cell, so along a
+    straight line the ground is a quadratic in the distance travelled for as
+    long as the line stays in one cell (outside the grid the ground is clamped
+    to the edge, which keeps it quadratic). The leg is cut where it crosses a
+    grid line; on each piece three samples fix the quadratic exactly, and the
+    clearance (linear altitude minus quadratic ground) has its minimum at an
+    end of the piece or at its vertex. No ridge between samples can hide.
+
+    `skip_start` and `skip_end` leave out that many metres at an end that is on
+    the ground: a takeoff climbs out of the pad and a landing settles onto it,
+    and neither is meant to keep the cruise clearance there.
+    """
+    length = math.dist(start, end)
     if length <= EPS:
         return None
-    # Ignore the very ends: a landing leg is meant to touch the ground.
-    steps = max(2, int(length / step))
-    worst: tuple[float, float, float] | None = None
-    start, end = leg.start, leg.end.xyz
-    for i in range(1, steps):
-        f = i / steps
-        x = start[0] + (end[0] - start[0]) * f
-        y = start[1] + (end[1] - start[1]) * f
-        z = start[2] + (end[2] - start[2]) * f
-        clearance = z - world.elevation_at(x, y)
-        if worst is None or clearance < worst[0]:
-            worst = (clearance, x, y)
-    return worst
+    lo = min(1.0, skip_start / length)
+    hi = max(0.0, 1.0 - skip_end / length)
+    if hi - lo <= EPS:
+        return None
+
+    def at(t: float) -> tuple[float, float, float]:
+        return (
+            start[0] + (end[0] - start[0]) * t,
+            start[1] + (end[1] - start[1]) * t,
+            start[2] + (end[2] - start[2]) * t,
+        )
+
+    def clearance(t: float) -> float:
+        x, y, z = at(t)
+        return z - world.elevation_at(x, y)
+
+    cuts = {lo, hi}
+    terrain = world.terrain
+    if terrain is not None:
+        for axis, origin, count in ((0, terrain.origin_x, terrain.cols), (1, terrain.origin_y, terrain.rows)):
+            span = end[axis] - start[axis]
+            if abs(span) <= EPS:
+                continue
+            for k in range(count):
+                t = (origin + k * terrain.spacing - start[axis]) / span
+                if lo < t < hi:
+                    cuts.add(t)
+    cuts = sorted(cuts)
+
+    worst: tuple[float, float] | None = None  # (clearance, t)
+    for a, b in zip(cuts, cuts[1:]):
+        if b - a <= EPS:
+            continue
+        m = (a + b) / 2
+        ca, cm, cb = clearance(a), clearance(m), clearance(b)
+        candidates = [(ca, a), (cb, b)]
+        # The quadratic through the three samples, in u = (t - a) / (b - a).
+        curve = 2 * (ca - 2 * cm + cb)
+        if curve > EPS:  # opens upward: the vertex is a minimum
+            u = (3 * ca - 4 * cm + cb) / (2 * curve)
+            if 0.0 < u < 1.0:
+                t = a + (b - a) * u
+                candidates.append((clearance(t), t))
+        low = min(candidates)
+        if worst is None or low[0] < worst[0]:
+            worst = low
+    if worst is None:
+        return None
+    x, y, _ = at(worst[1])
+    return (worst[0], x, y)
 
 
 def check_landing(

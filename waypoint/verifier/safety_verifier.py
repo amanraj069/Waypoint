@@ -14,6 +14,8 @@ planner as the reason its plan was rejected.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from waypoint.planner.models import MissionConstraints, Plan
 from waypoint.verifier.checks import (
     check_altitude,
@@ -32,12 +34,16 @@ from waypoint.verifier.checks import (
 from waypoint.verifier.models import DEFAULT_CONFIG, VerificationResult, VerifierConfig, Violation
 from waypoint.world.models import World
 
+if TYPE_CHECKING:
+    from waypoint.intent.models import MissionIntent
+
 
 def verify(
     plan: Plan,
     constraints: MissionConstraints,
     config: VerifierConfig | None = None,
     world: World | None = None,
+    intent: "MissionIntent | None" = None,
 ) -> VerificationResult:
     """Check a plan against the safety envelope.
 
@@ -48,6 +54,10 @@ def verify(
 
     Pass a `world` to also check the route against the ground and the buildings
     standing on it; with none, the checks that need an environment are skipped.
+
+    Pass an `intent` to also check that the plan does what the mission asked
+    (`waypoint.intent.check`): its violations are INTENT, blocking like the
+    safety ones, and listed after them.
     """
     config = config or DEFAULT_CONFIG
     flat = flatten(plan)
@@ -61,10 +71,14 @@ def verify(
         *check_turns(flat, config),
         *check_battery(legs, flat, constraints, config),
         *check_separation(flat, legs, constraints),
-        *check_buildings(flat, legs, world),
+        *check_buildings(flat, legs, world, config),
         *check_terrain(flat, legs, world, config),
         *check_landing(flat, world, config),
     ]
+    if intent is not None:
+        from waypoint.intent.check import check_intent  # noqa: PLC0415 -- intent imports the verifier
+
+        violations += check_intent(plan, intent, constraints=constraints, world=world, config=config)
 
     return VerificationResult(
         passed=not any(v.blocking for v in violations),

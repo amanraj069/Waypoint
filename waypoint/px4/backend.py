@@ -52,6 +52,7 @@ from waypoint.sim.config import DEFAULT_CONFIG, NO_WIND, SimConfig, Vector, Wind
 from waypoint.sim.dynamics import add, desired_velocity, distance, heading_of
 from waypoint.sim.executor import LiveObstacle, RunEvent, place
 from waypoint.sim.faults import FaultEvent, FaultSchedule, FaultType, NO_FAULTS
+from waypoint.sim.shield import GpsDriftObserver, SafetyShield
 from waypoint.sim.state import UAVState
 from waypoint.world.models import World
 
@@ -67,6 +68,8 @@ ARM_TIMEOUT = 90.0
 AIRBORNE_AGL = 2.0
 
 HOLD_MODES = ("freeze", "hover")
+#: Airframes with a camera: the world they fly in is drawn for the camera, not for people.
+CAMERA_MODELS = ("x500_depth", "x500_mono_cam")
 #: How faults reach PX4: imitated by the backend (comparable with the custom
 #: simulator), or injected into PX4 where PX4 accepts it (tests PX4's own failsafes).
 FAULT_DELIVERY = ("emulate", "px4")
@@ -215,6 +218,14 @@ class Px4Backend(ExecutorBackend):
         )
         self.events: list[RunEvent] = []
         self._obstacles = [LiveObstacle(obstacle=o) for o in constraints.obstacles]
+        # The same runtime safety filter as the custom simulator, on PX4's velocity setpoints.
+        self._shield = (
+            SafetyShield(constraints, self.world, lambda: [live.obstacle for live in self._obstacles])
+            if self.shield else None
+        )
+        self._shielding: tuple[str, ...] = ()
+        self.shield_ticks = 0
+        self._gps = GpsDriftObserver()
         self._fired: set[int] = set()
         self._active: list[_Active] = []
         self._breached: set[int] = set()
@@ -340,12 +351,34 @@ class Px4Backend(ExecutorBackend):
                     {"waypoint_index": index},
                 )
                 return
-            self._steer(desired_velocity(self._state.reported_position, target, cruise, config))
+            self._steer(self._shielded(desired_velocity(self._state.reported_position, target, cruise, config)))
             yield self._tick()
             if self._stopped:
                 return
         if not handoff:
             self._reached(index, waypoint)
+
+    def _shielded(self, desired: Vector) -> Vector:
+        """The setpoint through the safety filter; a SHIELD event when what it avoids changes."""
+        if self._shield is None:
+            return desired
+        state = self._state
+        where = self._gps.update(state.reported_position, state.velocity_vector, self.config.dt)
+        filtered, hazards = self._shield.filter(
+            where, desired, velocity=state.velocity_vector, landing=self._landing,
+        )
+        hazards = tuple(sorted(set(hazards)))
+        if hazards:
+            self.shield_ticks += 1
+            if hazards != self._shielding:
+                change = distance(filtered, desired)
+                self._record(
+                    "SHIELD",
+                    f"safety filter steering clear of {', '.join(hazards)} (changed the command by {change:.1f} m/s)",
+                    {"hazards": list(hazards), "change": round(change, 2)},
+                )
+        self._shielding = hazards
+        return filtered
 
     def _dwell(self, waypoint: Waypoint) -> Iterator[UAVState]:
         seconds = {
@@ -621,8 +654,8 @@ class Px4Backend(ExecutorBackend):
         self._record(
             "WAYPOINT",
             f"reached waypoint {index} ({waypoint.action.value}) at ({state.x:.1f}, {state.y:.1f}, {state.z:.1f})",
-            {"waypoint_index": index, "position": [round(c, 2) for c in state.position],
-             "gps_error": round(state.gps_error, 2)},
+            {"waypoint_index": index, "action": waypoint.action.value,
+             "position": [round(c, 2) for c in state.position], "gps_error": round(state.gps_error, 2)},
         )
 
     def _record(self, type: str, description: str, payload: dict | None = None) -> None:
@@ -641,6 +674,12 @@ class Px4Backend(ExecutorBackend):
         state = self._state
         waypoints = [{"x": w.x, "y": w.y, "z": w.z, "action": w.action.value} for w in plan.waypoints()]
         world = self.world or World()
+        if self.model in CAMERA_MODELS:
+            # The route's beads hang in the air along the path: the camera would see them as
+            # obstacles on the route. Only the landing pad is drawn, flat on the ground.
+            if self._plans == 1:
+                self._show_landing_pad(plan, world)
+            return
         if self._plans == 1:
             model = _route(world, state.position, waypoints, name="route")
             self._show_landing_pad(plan, world)
@@ -656,11 +695,14 @@ class Px4Backend(ExecutorBackend):
             return
         land = waypoints[-1]
         if math.hypot(land.x - self._pad[0], land.y - self._pad[1]) > 5.0:
-            self._sitl.show(_sdf_document(_pad("landing_pad", land.x, land.y, world, LANDING)))
+            beam = self.model not in CAMERA_MODELS
+            self._sitl.show(_sdf_document(_pad("landing_pad", land.x, land.y, world, LANDING, beam=beam)))
 
     def _show_obstacle(self, obstacle: Obstacle, number: int) -> None:
         constraints = self.constraints.model_dump(mode="json") if self.constraints else {}
-        model = _obstacle(self.world or World(), obstacle.model_dump(), constraints, f"appeared_{number}")
+        # Solid when the aircraft carries a camera: a crane is not glass to a depth sensor.
+        alpha = 1.0 if self.model in CAMERA_MODELS else 0.35
+        model = _obstacle(self.world or World(), obstacle.model_dump(), constraints, f"appeared_{number}", alpha)
         self._sitl.show(_sdf_document(model))
 
     @property
