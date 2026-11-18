@@ -1,0 +1,126 @@
+{
+ "system": "waypoint",
+ "mission_id": "open_tower_inspection",
+ "mission": "inspect the comms tower 120 m east of base: photograph it from the north, east and south at 30 m, then return and land",
+ "world": "open",
+ "faults_spec": "random",
+ "seed": 0,
+ "error": null,
+ "faults": [
+  {
+   "type": "OBSTACLE_APPEARS",
+   "trigger": {
+    "time": null,
+    "battery_below": null,
+    "at_waypoint": 2,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 1.0,
+   "direction": 0.0,
+   "vertical": 0.0,
+   "duration": null,
+   "obstacle": {
+    "x": 0.0,
+    "y": 0.0,
+    "radius": 8.8,
+    "height": 40.6,
+    "name": "unmapped obstacle"
+   },
+   "ahead": 25.7,
+   "name": "obstacle spotted"
+  },
+  {
+   "type": "WIND_GUST",
+   "trigger": {
+    "time": 31.3,
+    "battery_below": null,
+    "at_waypoint": null,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 8.7,
+   "direction": 13.6,
+   "vertical": 0.0,
+   "duration": 6.1,
+   "obstacle": null,
+   "ahead": null,
+   "name": "gust"
+  },
+  {
+   "type": "BATTERY_DRAIN_SPIKE",
+   "trigger": {
+    "time": 9.8,
+    "battery_below": null,
+    "at_waypoint": null,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 0.8,
+   "direction": 0.0,
+   "vertical": 0.0,
+   "duration": 15.5,
+   "obstacle": null,
+   "ahead": null,
+   "name": "cell fault"
+  }
+ ],
+ "usage": {
+  "openai:gpt-5-nano": {
+   "calls": 2,
+   "input": 2683,
+   "cached": 0,
+   "output": 2581,
+   "reasoning": 2176
+  }
+ },
+ "detail": {
+  "outcome": "completed",
+  "inflight_replans": 1,
+  "log_events": {
+   "execution_resumed": 1,
+   "execution_started": 1,
+   "intent": 1,
+   "mission_finished": 1,
+   "mission_started": 1,
+   "perception": 1,
+   "plan_proposed": 3,
+   "repair": 2,
+   "replan_triggered": 1,
+   "verification": 3
+  },
+  "wall_s": 16.5
+ },
+ "grade": {
+  "flew": true,
+  "landed": true,
+  "crashed": false,
+  "battery_depleted": false,
+  "keep_out_breaches": 0,
+  "left_geofence": false,
+  "seconds_outside_geofence": 0.0,
+  "above_ceiling": false,
+  "max_altitude_m": 43.6,
+  "distance_m": 430.8,
+  "flight_s": 118.9,
+  "battery_left_pct": 74.9,
+  "expected_feasible": true,
+  "accomplished": true,
+  "refused": null,
+  "share_done": 1.0,
+  "targets": [
+   {
+    "name": "comms tower",
+    "action": "CAPTURE",
+    "required_views": 3,
+    "views": 3,
+    "missing_sides": [],
+    "served": true,
+    "score": 1.0
+   }
+  ],
+  "why_not": null,
+  "touchdown_error_m": 0.03
+ },
+ "outcome": "completed"
+}

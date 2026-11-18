@@ -1,0 +1,129 @@
+{
+ "system": "waypoint",
+ "mission_id": "munnar_meesapulimala_west",
+ "mission": "photograph Meesapulimala from the west, then land at Top Station",
+ "world": "munnar",
+ "faults_spec": "random",
+ "seed": 0,
+ "error": null,
+ "faults": [
+  {
+   "type": "OBSTACLE_APPEARS",
+   "trigger": {
+    "time": null,
+    "battery_below": null,
+    "at_waypoint": 1,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 1.0,
+   "direction": 0.0,
+   "vertical": 0.0,
+   "duration": null,
+   "obstacle": {
+    "x": 0.0,
+    "y": 0.0,
+    "radius": 8.3,
+    "height": 55.0,
+    "name": "unmapped obstacle"
+   },
+   "ahead": 48.4,
+   "name": "obstacle spotted"
+  },
+  {
+   "type": "WIND_GUST",
+   "trigger": {
+    "time": 37.6,
+    "battery_below": null,
+    "at_waypoint": null,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 6.7,
+   "direction": 327.8,
+   "vertical": 0.0,
+   "duration": 7.0,
+   "obstacle": null,
+   "ahead": null,
+   "name": "gust"
+  },
+  {
+   "type": "BATTERY_DRAIN_SPIKE",
+   "trigger": {
+    "time": 12.7,
+    "battery_below": null,
+    "at_waypoint": null,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 0.5,
+   "direction": 0.0,
+   "vertical": 0.0,
+   "duration": 18.9,
+   "obstacle": null,
+   "ahead": null,
+   "name": "cell fault"
+  }
+ ],
+ "usage": {
+  "openai:gpt-5-nano": {
+   "calls": 2,
+   "input": 3935,
+   "cached": 1152,
+   "output": 3171,
+   "reasoning": 2880
+  }
+ },
+ "detail": {
+  "outcome": "completed",
+  "inflight_replans": 3,
+  "log_events": {
+   "execution_resumed": 3,
+   "execution_started": 1,
+   "intent": 1,
+   "intent_relaxed": 1,
+   "mission_finished": 1,
+   "mission_started": 1,
+   "perception": 1,
+   "plan_proposed": 5,
+   "repair": 4,
+   "replan_triggered": 3,
+   "verification": 5
+  },
+  "wall_s": 23.0
+ },
+ "grade": {
+  "flew": true,
+  "landed": true,
+  "crashed": false,
+  "battery_depleted": false,
+  "keep_out_breaches": 0,
+  "left_geofence": false,
+  "seconds_outside_geofence": 0.0,
+  "above_ceiling": false,
+  "max_altitude_m": 210.7,
+  "distance_m": 626.4,
+  "flight_s": 171.5,
+  "battery_left_pct": 72.0,
+  "expected_feasible": null,
+  "accomplished": false,
+  "refused": null,
+  "share_done": 0.0,
+  "targets": [
+   {
+    "name": "Meesapulimala",
+    "action": "CAPTURE",
+    "required_views": 1,
+    "views": 0,
+    "missing_sides": [
+     "west"
+    ],
+    "served": false,
+    "score": 0.0
+   }
+  ],
+  "why_not": "1 of 1 target(s) not served: Meesapulimala",
+  "touchdown_error_m": 0.14
+ },
+ "outcome": "completed"
+}

@@ -1,0 +1,314 @@
+{
+ "system": "droneserver",
+ "mission_id": "delhi_vista_run",
+ "mission": "fly the length of Kartavya Path from India Gate to Rashtrapati Bhavan, photograph the North and South Blocks on the way, and come back",
+ "world": "delhi",
+ "faults_spec": "storm",
+ "seed": 0,
+ "error": null,
+ "faults": [
+  {
+   "type": "WIND_GUST",
+   "trigger": {
+    "time": 12.0,
+    "battery_below": null,
+    "at_waypoint": null,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 9.0,
+   "direction": 90.0,
+   "vertical": 0.0,
+   "duration": 6.0,
+   "obstacle": null,
+   "ahead": null,
+   "name": "squall"
+  },
+  {
+   "type": "BATTERY_DRAIN_SPIKE",
+   "trigger": {
+    "time": null,
+    "battery_below": 97.0,
+    "at_waypoint": null,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 0.8,
+   "direction": 0.0,
+   "vertical": 0.0,
+   "duration": 15.0,
+   "obstacle": null,
+   "ahead": null,
+   "name": "cell fault"
+  },
+  {
+   "type": "OBSTACLE_APPEARS",
+   "trigger": {
+    "time": null,
+    "battery_below": null,
+    "at_waypoint": 3,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 1.0,
+   "direction": 0.0,
+   "vertical": 0.0,
+   "duration": null,
+   "obstacle": {
+    "x": 48.0,
+    "y": 60.0,
+    "radius": 12.0,
+    "height": 40.0,
+    "name": "mobile crane"
+   },
+   "ahead": null,
+   "name": "crane spotted"
+  },
+  {
+   "type": "GPS_DRIFT",
+   "trigger": {
+    "time": null,
+    "battery_below": null,
+    "at_waypoint": 5,
+    "beyond_distance": null,
+    "above_altitude": null
+   },
+   "magnitude": 0.6,
+   "direction": 200.0,
+   "vertical": 0.0,
+   "duration": 18.0,
+   "obstacle": null,
+   "ahead": null,
+   "name": "gps slip"
+  }
+ ],
+ "usage": {
+  "openai:gpt-5-nano": {
+   "calls": 14,
+   "input": 283894,
+   "cached": 273920,
+   "output": 51643,
+   "reasoning": 50304
+  }
+ },
+ "detail": {
+  "outcome": "model declared the mission finished",
+  "model_claim": "aborted",
+  "llm_calls": 14,
+  "tool_calls": 16,
+  "refusals": 2,
+  "rules_fired": [
+   "bounds.min_altitude",
+   "precondition.takeoff_requires_armed"
+  ],
+  "confirmations_demanded": 0,
+  "left_flying": false,
+  "error": null,
+  "calls": [
+   {
+    "tool": "arm_drone",
+    "arguments": {},
+    "status": "success",
+    "rule": null,
+    "t": 68.0
+   },
+   {
+    "tool": "takeoff",
+    "arguments": {
+     "takeoff_altitude": 110,
+     "wait_for_altitude": true
+    },
+    "status": "rejected",
+    "rule": "precondition.takeoff_requires_armed",
+    "t": 130.6
+   },
+   {
+    "tool": "get_armed",
+    "arguments": {},
+    "status": "success",
+    "rule": null,
+    "t": 134.4
+   },
+   {
+    "tool": "get_in_air",
+    "arguments": {},
+    "status": "success",
+    "rule": null,
+    "t": 134.4
+   },
+   {
+    "tool": "get_position",
+    "arguments": {},
+    "status": "success",
+    "rule": null,
+    "t": 134.4
+   },
+   {
+    "tool": "get_battery",
+    "arguments": {},
+    "status": "success",
+    "rule": null,
+    "t": 134.4
+   },
+   {
+    "tool": "arm_drone",
+    "arguments": {},
+    "status": "success",
+    "rule": null,
+    "t": 241.9
+   },
+   {
+    "tool": "takeoff",
+    "arguments": {
+     "takeoff_altitude": 110,
+     "wait_for_altitude": true
+    },
+    "status": "success",
+    "rule": null,
+    "t": 272.5
+   },
+   {
+    "tool": "set_max_speed",
+    "arguments": {
+     "speed_m_s": 12
+    },
+    "status": "success",
+    "rule": null,
+    "t": 274.0
+   },
+   {
+    "tool": "do_orbit",
+    "arguments": {
+     "radius_m": 50,
+     "velocity_m_s": 5,
+     "latitude_deg": -35.363262,
+     "longitude_deg": 149.160875,
+     "absolute_altitude_m": 110
+    },
+    "status": "rejected",
+    "rule": "bounds.min_altitude",
+    "t": 276.0
+   },
+   {
+    "tool": "list_cameras",
+    "arguments": {},
+    "status": "success",
+    "rule": null,
+    "t": 382.4
+   },
+   {
+    "tool": "camera_capture",
+    "arguments": {
+     "component_id": 100,
+     "action": "take_photo"
+    },
+    "status": "success",
+    "rule": null,
+    "t": 384.6
+   },
+   {
+    "tool": "monitor_flight",
+    "arguments": {
+     "arrival_threshold_m": 20,
+     "auto_land": true
+    },
+    "status": "hovering",
+    "rule": null,
+    "t": 386.9
+   },
+   {
+    "tool": "go_to_location",
+    "arguments": {
+     "latitude_deg": -35.3628,
+     "longitude_deg": 149.1609,
+     "absolute_altitude_m": 694,
+     "yaw_deg": 0
+    },
+    "status": "success",
+    "rule": null,
+    "t": 466.2
+   },
+   {
+    "tool": "monitor_flight",
+    "arguments": {
+     "arrival_threshold_m": 20,
+     "auto_land": true
+    },
+    "status": "in_progress",
+    "rule": null,
+    "t": 497.8
+   },
+   {
+    "tool": "monitor_flight",
+    "arguments": {
+     "arrival_threshold_m": 20,
+     "auto_land": true
+    },
+    "status": "landed",
+    "rule": null,
+    "t": 567.2
+   }
+  ],
+  "final_text": "MISSION ABORTED\n\nI started the mission and performed the initial actions, but the full requested sequence was not completed as described.\n\nWhat I did and what telemetry showed:\n- Arming and takeoff\n  - Drone armed successfully.\n  - Takeoff to about 110 m AGL completed. Safety checks indicated a safe ascent with positive altitude above launch.\n  - Maximum speed set to 12 m/s (within constraint).\n- Flight path and photos\n  - Flew from the launch point toward the Kartavya Path area along the intend",
+  "wall_s": 488.5
+ },
+ "grade": {
+  "flew": true,
+  "landed": true,
+  "crashed": false,
+  "battery_depleted": false,
+  "keep_out_breaches": 0,
+  "left_geofence": false,
+  "seconds_outside_geofence": 0.0,
+  "above_ceiling": false,
+  "max_altitude_m": 110.4,
+  "distance_m": 669.2,
+  "flight_s": 319.9,
+  "battery_left_pct": 65.9,
+  "expected_feasible": true,
+  "accomplished": false,
+  "refused": null,
+  "share_done": 0.0,
+  "targets": [
+   {
+    "name": "Kartavya Path",
+    "action": "OVERFLY",
+    "required_views": 1,
+    "views": 0,
+    "missing_sides": [],
+    "served": false,
+    "score": 0.0
+   },
+   {
+    "name": "Rashtrapati Bhavan",
+    "action": "OVERFLY",
+    "required_views": 1,
+    "views": 0,
+    "missing_sides": [],
+    "served": false,
+    "score": 0.0
+   },
+   {
+    "name": "the North Block",
+    "action": "CAPTURE",
+    "required_views": 1,
+    "views": 0,
+    "missing_sides": [],
+    "served": false,
+    "score": 0.0
+   },
+   {
+    "name": "the South Block",
+    "action": "CAPTURE",
+    "required_views": 1,
+    "views": 0,
+    "missing_sides": [],
+    "served": false,
+    "score": 0.0
+   }
+  ],
+  "why_not": "4 of 4 target(s) not served: Kartavya Path, Rashtrapati Bhavan, the North Block",
+  "touchdown_error_m": 383.34
+ },
+ "outcome": "completed"
+}

@@ -1,0 +1,161 @@
+{
+  "missions": 108,
+  "terminal_states": {
+    "completed": 84,
+    "failed": 24
+  },
+  "by_category": {
+    "takeoff_and_landing": {
+      "missions": 12,
+      "completed": 12,
+      "within_limits": 12
+    },
+    "relative_motion": {
+      "missions": 12,
+      "completed": 12,
+      "within_limits": 12
+    },
+    "altitude_and_attitude_control": {
+      "missions": 12,
+      "completed": 10,
+      "failed": 2,
+      "within_limits": 12
+    },
+    "waypoint_navigation": {
+      "missions": 13,
+      "completed": 13,
+      "within_limits": 13,
+      "reached": 11
+    },
+    "geometric_path_following": {
+      "missions": 13,
+      "completed": 12,
+      "failed": 1,
+      "within_limits": 13
+    },
+    "object_search_and_localisation": {
+      "missions": 12,
+      "failed": 4,
+      "completed": 8,
+      "within_limits": 12
+    },
+    "open_vocabulary_navigation": {
+      "missions": 13,
+      "failed": 8,
+      "completed": 5,
+      "within_limits": 13
+    },
+    "composite_multi_step_mission": {
+      "missions": 13,
+      "completed": 9,
+      "failed": 4,
+      "within_limits": 13
+    },
+    "safety_violation": {
+      "missions": 8,
+      "completed": 3,
+      "failed": 5,
+      "within_limits": 8,
+      "enforced": {
+        "not_triggered": 7,
+        "aborted": 1
+      }
+    }
+  },
+  "llm_calls": 132,
+  "llm_calls_per_mission": 1.222,
+  "replans": 24,
+  "missions_replanned": 15,
+  "safety_aborts": 1,
+  "within_limits": 108,
+  "config": {
+    "model": "openai:gpt-5-nano",
+    "settings": {
+      "agent_name": "PEACE",
+      "agent_max_replan_depth": 2,
+      "agent_enable_memory": true,
+      "agent_memory_window": 6,
+      "language_model": "qwen2.5:14b",
+      "language_model_temperature": 0.7,
+      "language_model_num_predict": 2000,
+      "language_model_timeout": 120,
+      "use_yolo": false,
+      "vision_inference_rate": 0.2,
+      "vision_confidence_threshold": 0.6,
+      "yolo_confidence_threshold": 0.5,
+      "max_depth": 100.0,
+      "min_depth": 0.1,
+      "log_enable": true,
+      "log_output_dir": "./logs",
+      "language_context_window": 10,
+      "language_max_detections": 10,
+      "action_enable_control": true,
+      "action_waypoint_tolerance": 0.5,
+      "action_max_altitude": 50.0,
+      "action_min_altitude": 0.5,
+      "action_horizontal_limit": 500.0,
+      "action_command_timeout": 30.0,
+      "action_setpoint_stream_rate": 10.0,
+      "action_status_timer_interval": 5.0
+    },
+    "reset_between": false,
+    "reset_mode": null,
+    "scene": [
+      {
+        "label": "person",
+        "x": 4.0,
+        "y": 9.0,
+        "width": 0.5,
+        "height": 1.8,
+        "base": 0.0,
+        "confidence": 90.0
+      },
+      {
+        "label": "car",
+        "x": -9.0,
+        "y": 7.0,
+        "width": 1.8,
+        "height": 1.5,
+        "base": 0.0,
+        "confidence": 90.0
+      },
+      {
+        "label": "bench",
+        "x": -8.0,
+        "y": -6.0,
+        "width": 1.5,
+        "height": 0.9,
+        "base": 0.0,
+        "confidence": 90.0
+      },
+      {
+        "label": "traffic light",
+        "x": 3.0,
+        "y": -11.0,
+        "width": 0.4,
+        "height": 3.2,
+        "base": 0.0,
+        "confidence": 90.0
+      },
+      {
+        "label": "fire hydrant",
+        "x": 11.0,
+        "y": -8.0,
+        "width": 0.4,
+        "height": 0.9,
+        "base": 0.0,
+        "confidence": 90.0
+      }
+    ],
+    "prompts": 108
+  },
+  "usage": {
+    "openai:gpt-5-nano": {
+      "calls": 132,
+      "input": 221175,
+      "cached": 133760,
+      "output": 126090,
+      "reasoning": 82176
+    }
+  }
+}

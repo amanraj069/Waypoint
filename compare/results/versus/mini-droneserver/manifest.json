@@ -1,0 +1,20 @@
+{
+ "started": "2026-11-17T10:08:40",
+ "systems": [
+  "droneserver"
+ ],
+ "missions": [
+  "lodhi_bara_gumbad"
+ ],
+ "seed": 0,
+ "providers": [
+  "openai",
+  "gemini"
+ ],
+ "planner": "openai [COST=LOW, effort=low] (gpt-5-mini) -> gemini (gemini-3.7-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.5-flash-lite, gemini-3.1-flash-lite, gemini-3.0-flash, gemini-2.5-flash, gemini-2.5-flash-lite)",
+ "model_ladder": [
+  "gpt-5-mini"
+ ],
+ "reasoning_effort": "low",
+ "finished": "2026-11-17T10:20:48"
+}
